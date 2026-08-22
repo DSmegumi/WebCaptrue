@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "WebCaptrue",
+  "version": "0.1.0",
+  "description": "One-click offline web capture for later AI-assisted analysis. Chrome 109+ compatible.",
+  "minimum_chrome_version": "109",
+  "permissions": [
+    "debugger",
+    "scripting",
+    "storage",
+    "downloads",
+    "tabs",
+    "offscreen"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "action": {
+    "default_title": "WebCaptrue",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ]
+}
