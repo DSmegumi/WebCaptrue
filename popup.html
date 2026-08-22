@@ -23,6 +23,8 @@
       <div><strong id="actions">0</strong><span>操作</span></div>
       <div><strong id="consoleCount">0</strong><span>日志</span></div>
       <div><strong id="screenshots">0</strong><span>截图</span></div>
+      <div><strong id="targets">0</strong><span>子目标</span></div>
+      <div><strong id="storageSnapshots">0</strong><span>存储快照</span></div>
     </section>
 
     <label class="option">
@@ -32,6 +34,10 @@
     <label class="option">
       <input id="autoScreenshots" type="checkbox" checked>
       <span>关键操作自动截图</span>
+    </label>
+    <label class="option">
+      <input id="captureClientStorage" type="checkbox" checked>
+      <span>保存页面存储（IndexedDB / Cache Storage）</span>
     </label>
 
     <button id="primary" type="button">开始完整采集</button>
