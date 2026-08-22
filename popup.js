@@ -7,6 +7,7 @@
   var message = document.getElementById("message");
   var captureBodies = document.getElementById("captureBodies");
   var autoScreenshots = document.getElementById("autoScreenshots");
+  var captureClientStorage = document.getElementById("captureClientStorage");
   var currentState = null;
   var activeTab = null;
 
@@ -47,6 +48,8 @@
     setText("actions", counters.actions);
     setText("consoleCount", counters.console);
     setText("screenshots", counters.screenshots);
+    setText("targets", counters.targets);
+    setText("storageSnapshots", counters.storageSnapshots);
 
     if (state.active) {
       badge.textContent = "REC";
@@ -55,6 +58,7 @@
       primary.className = "stop";
       captureBodies.disabled = true;
       autoScreenshots.disabled = true;
+      captureClientStorage.disabled = true;
     } else {
       badge.textContent = "IDLE";
       badge.className = "badge idle";
@@ -62,6 +66,7 @@
       primary.className = "";
       captureBodies.disabled = false;
       autoScreenshots.disabled = false;
+      captureClientStorage.disabled = false;
     }
   }
 
@@ -92,7 +97,8 @@
           tabId: activeTab.id,
           options: {
             captureBodies: captureBodies.checked,
-            autoScreenshots: autoScreenshots.checked
+            autoScreenshots: autoScreenshots.checked,
+            captureClientStorage: captureClientStorage.checked
           }
         });
         render(started.state);
