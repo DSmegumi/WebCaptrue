@@ -19,14 +19,15 @@ for (const permission of ["debugger", "downloads", "offscreen", "storage", "tabs
 
 const required = [
   "popup.html", "popup.css", "popup.js", "offscreen.html",
-  "src/background.js", "src/content.js", "src/offscreen.js",
-  "src/lib/db.js", "src/lib/zip.js", "AGENTS.md", "README.md", "docs/PROJECT_PLAN.md"
+  "src/background.js", "src/background/00-core.js", "src/background/10-capture.js", "src/background/20-events.js",
+  "src/content.js", "src/offscreen.js", "src/offscreen/00-analysis.js", "src/offscreen/10-export.js",
+  "src/lib/db.js", "src/lib/zip.js", "AGENTS.md", "README.md", "docs/PROJECT_PLAN.md", "scripts/smoke.mjs"
 ];
 for (const file of required) {
   if (!fs.existsSync(path.join(root, file))) errors.push(`missing file: ${file}`);
 }
 
-const jsFiles = ["popup.js", "src/background.js", "src/content.js", "src/offscreen.js", "src/lib/db.js", "src/lib/zip.js"];
+const jsFiles = ["popup.js", "src/background.js", "src/background/00-core.js", "src/background/10-capture.js", "src/background/20-events.js", "src/content.js", "src/offscreen.js", "src/offscreen/00-analysis.js", "src/offscreen/10-export.js", "src/lib/db.js", "src/lib/zip.js"];
 for (const file of jsFiles) {
   try {
     execFileSync(process.execPath, ["--check", path.join(root, file)], { stdio: "pipe" });
