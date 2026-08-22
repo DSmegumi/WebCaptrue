@@ -1,0 +1,9 @@
+{
+  "name": "webcaptrue",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome 109-compatible offline web capture extension",
+  "scripts": {
+    "test": "node scripts/validate.mjs"
+  }
+}
