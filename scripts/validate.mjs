@@ -8,16 +8,19 @@ const root = path.resolve(here, "..");
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 
 const errors = [];
+const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+if (manifest.version !== packageJson.version) errors.push("manifest.json and package.json versions must match");
+
 if (manifest.manifest_version !== 3) errors.push("manifest_version must be 3");
 if (String(manifest.minimum_chrome_version) !== "109") errors.push("minimum_chrome_version must remain 109");
-for (const permission of ["debugger", "downloads", "offscreen", "storage", "tabs"]) {
+for (const permission of ["debugger", "downloads", "offscreen", "storage", "tabs", "webNavigation"]) {
   if (!manifest.permissions.includes(permission)) errors.push(`missing permission: ${permission}`);
 }
 
 const required = [
   "popup.html", "popup.css", "popup.js", "offscreen.html",
   "src/background.js", "src/content.js", "src/offscreen.js",
-  "src/lib/db.js", "src/lib/zip.js", "AGENTS.md", "README.md"
+  "src/lib/db.js", "src/lib/zip.js", "AGENTS.md", "README.md", "docs/PROJECT_PLAN.md"
 ];
 for (const file of required) {
   if (!fs.existsSync(path.join(root, file))) errors.push(`missing file: ${file}`);
