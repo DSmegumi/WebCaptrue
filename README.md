@@ -52,6 +52,9 @@ WebCaptrue 是一个面向内网、隔离网和受限办公环境的一键浏览
 - 面向 AI 的 `summary.json`、`workflow.json`、`api-index.json`
 - 默认凭证字段脱敏
 - Chrome 109 Offscreen Document heartbeat
+- `integrity/completeness.json` 完整性结论及失败/截断/排除/脱敏审计
+- Chrome 125+ flat session 与 Chrome 109 `targetId` 回退
+- 对采集开始前已存在的 Shared Worker 进行同源范围补抓
 
 ## 使用方式
 
@@ -70,6 +73,8 @@ WebCaptrue 是一个面向内网、隔离网和受限办公环境的一键浏览
 7. 再次打开 WebCaptrue，点击“停止并导出 ZIP”。
 8. 在允许使用 AI 的环境中，将 ZIP 交给 Codex/其他分析工具。
 
+也可以在目标网页中使用 `Ctrl+Shift+Y` 开始或停止采集；工具栏弹窗仍是可见状态和错误信息的权威入口。
+
 录制期间不要主动打开同一标签页的 DevTools。Chrome 会使扩展的 debugger 调试连接与 DevTools 产生冲突。
 
 ## AI 分析入口
@@ -78,13 +83,14 @@ WebCaptrue 是一个面向内网、隔离网和受限办公环境的一键浏览
 
 ```text
 ai/summary.json
+integrity/completeness.json
 ai/workflow.json
 api/api-index.json
 network/session.har
 timeline.jsonl
 ```
 
-其中 `workflow.json` 会尽量把用户操作和随后发生的 API 请求关联起来，`api-index.json` 则对接口进行路径归一化、GraphQL 识别和 JSON Schema 推断。
+先读取 `integrity/completeness.json` 判断是否存在已知缺口，再使用 `workflow.json` 和 `api-index.json`。`exclusions.jsonl` 记录非网页来源等有意排除项，`redactions.jsonl` 记录导出阶段的结构化脱敏位置。
 
 ## 安全
 
@@ -98,6 +104,8 @@ WebCaptrue 默认：
 - 普通输入框只记录字段信息和长度，不记录输入原文
 - 不包含遥测或远程执行代码
 
+采集记录先按浏览器暴露的结构保存到扩展本地会话，再在导出阶段对 DOM、运行时 JSON 和脚本字面量做结构保持型脱敏。截图保留原始像素，不执行 OCR 脱敏，因此仍可能显示页面中的敏感文本。
+
 即使经过默认脱敏，导出的 ZIP 仍应按照对应组织的信息安全要求处理。
 
 ## 开发与验证
@@ -106,6 +114,7 @@ WebCaptrue 默认：
 
 ```bash
 npm test
+npm run test:e2e:fixture
 ```
 
 项目开发规则见 [`AGENTS.md`](AGENTS.md)。完整目标、里程碑、当前功能和后续工作见 [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)。发布流程见 [`docs/RELEASES.md`](docs/RELEASES.md)。

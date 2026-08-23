@@ -1,0 +1,8 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Same origin frame</title>
+<button id="frame-fetch">同源 iframe 请求</button>
+<script>
+localStorage.setItem("frameFixture", "present");
+document.querySelector("#frame-fetch").addEventListener("click", () => fetch("/api/items?from=iframe"));
+</script>

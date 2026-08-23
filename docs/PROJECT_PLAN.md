@@ -159,6 +159,12 @@ WebCaptrue 只采集浏览器本身能够观察或通过浏览器授权调试接
 - `ai/capture-index.json`。
 - `ai/analysis-guide.md`。
 - AI 可直接从用户操作映射到对应 API。
+- Chrome 125+ 使用 flat session；Chrome 109 使用同源/同标签页范围内的 `targetId` 轮询回退。
+- 采集开始前已经存在的 Shared Worker 通过全局 Target 扫描补抓，且失败会进入完整性报告。
+- 导出包含完整性结论、失败、截断、排除和脱敏审计，避免静默缺失。
+- 第三方 `chrome-extension://` 资源保留元数据但不复制正文/源码，并逐项记录排除原因。
+- `timeline.jsonl` 只保留大对象引用；正文、脚本、DOM、Storage 和截图仍保存在各自权威目录。
+- 结构化 DOM、运行时 JSON 和脚本字面量在导出阶段脱敏，保持字段、数组和可解析结构。
 
 ## 7. 当前导出结构目标
 
@@ -167,6 +173,12 @@ WebCaptrue_YYYYMMDD_HHMMSS.zip
 ├── manifest.json
 ├── README.txt
 ├── timeline.jsonl
+├── integrity/
+│   ├── completeness.json
+│   ├── failures.jsonl
+│   ├── truncations.jsonl
+│   ├── exclusions.jsonl
+│   └── redactions.jsonl
 ├── ai/
 │   ├── summary.json
 │   ├── workflow.json
@@ -201,6 +213,7 @@ WebCaptrue_YYYYMMDD_HHMMSS.zip
 
 - 在真实 Chrome 109 / Windows 7 上做端到端实机验证。
 - 对 OOPIF、Dedicated Worker、Shared Worker、Service Worker 分别建立测试页。
+- 已建立本地双源 fixture，并在 Chrome 151 实测 Dedicated Worker、Shared Worker、Service Worker 和 OOPIF；Chrome 109 仍待回归。
 - 验证 Chrome 109 中 `targetId` 独立附加在不同 Target 类型上的实际行为。
 - 完善 Target 创建/销毁/重建后的自动重新附加。
 - 页面刷新、SPA 路由跳转、跨域 iframe 更新后重新建立采集关系。

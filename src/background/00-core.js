@@ -9,10 +9,16 @@ var SETTINGS_KEY = "webcatrueSettings";
 var db = new WebCaptrueDB();
 var requestMap = new Map();
 var capturedTargets = new Map();
+var capturedSessions = new Map();
 var targetInfoMap = new Map();
 var rootFrameIds = new Set();
+var allowedTargetOrigins = new Set();
 var expectedDetachKeys = new Set();
 var rootTargetId = null;
+var flatSessionsSupported = false;
+var targetPollTimer = null;
+var targetPollRunning = false;
+var legacySeenTargetIds = new Set();
 var lastInteraction = null;
 var lastScreenshotAt = 0;
 var persistTimer = null;
@@ -33,6 +39,14 @@ function freshState() {
     title: null,
     options: { captureBodies: true, autoScreenshots: true, captureClientStorage: true },
     counters: freshCounters(),
+    completeness: {
+      targetMode: "uninitialized",
+      targetScans: 0,
+      targetCandidates: 0,
+      targetAttachFailures: 0,
+      recordWriteFailures: 0,
+      issues: []
+    },
     lastError: null
   };
 }
@@ -91,6 +105,15 @@ function getTab(tabId) {
   });
 }
 
+function getActiveTab() {
+  return new Promise(function (resolve, reject) {
+    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve(tabs && tabs.length ? tabs[0] : null);
+    });
+  });
+}
+
 function getAllFrames(tabId) {
   return new Promise(function (resolve) {
     chrome.webNavigation.getAllFrames({ tabId: tabId }, function (frames) {
@@ -106,6 +129,15 @@ function sendTabMessage(tabId, message, frameId) {
     chrome.tabs.sendMessage(tabId, message, options, function (response) {
       if (chrome.runtime.lastError) resolve(null);
       else resolve(response || null);
+    });
+  });
+}
+
+function executeContentScript(tabId) {
+  return new Promise(function (resolve, reject) {
+    chrome.scripting.executeScript({ target: { tabId: tabId, allFrames: true }, files: ["src/lib/sanitize.js", "src/content.js"] }, function (results) {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve(results || []);
     });
   });
 }
@@ -160,6 +192,14 @@ function schedulePersist() {
   }, 350);
 }
 
+function markCompletenessIssue(code, detail) {
+  if (!state.completeness) state.completeness = freshState().completeness;
+  var issue = { code: code, at: new Date().toISOString(), detail: detail || {} };
+  state.completeness.issues.push(issue);
+  if (state.completeness.issues.length > 100) state.completeness.issues.shift();
+  schedulePersist();
+}
+
 function isSensitiveKey(name) {
   return /(?:pass(?:word)?|passwd|pwd|token|access[_-]?token|refresh[_-]?token|secret|session[_-]?id|authorization|cookie|api[_-]?key)/i.test(String(name || ""));
 }
@@ -189,9 +229,7 @@ function sanitizePayload(text, contentType) {
       return params.toString();
     } catch (_) {}
   }
-  return text
-    .replace(/((?:password|passwd|pwd|access[_-]?token|refresh[_-]?token|api[_-]?key|secret)\s*[=:]\s*)[^&\s,;]+/ig, "$1[REDACTED]")
-    .replace(/("(?:password|passwd|pwd|access[_-]?token|refresh[_-]?token|api[_-]?key|secret)"\s*:\s*")[^"]*(")/ig, "$1[REDACTED]$2");
+  return text.replace(/((?:password|passwd|pwd|access[_-]?token|refresh[_-]?token|api[_-]?key|secret|authorization)\s*[=:]\s*)(["'])(.*?)\2/ig, "$1$2[REDACTED]$2");
 }
 
 function redactHeaders(headers) {
@@ -210,7 +248,11 @@ function addRecord(type, data) {
     type: type,
     capturedAt: new Date().toISOString(),
     data: data
-  }).catch(function () {});
+  }).catch(function (error) {
+    if (!state.completeness) state.completeness = freshState().completeness;
+    state.completeness.recordWriteFailures += 1;
+    markCompletenessIssue("record-write-failed", { type: type, reason: error && error.message || String(error) });
+  });
 }
 
 function isApiType(type) {
@@ -218,21 +260,28 @@ function isApiType(type) {
 }
 
 function sourceKey(source) {
+  if (source && source.sessionId) return "session:" + (source.tabId || state.tabId) + ":" + source.sessionId;
   if (source && source.targetId) return "target:" + source.targetId;
   return "tab:" + (source && source.tabId);
 }
 
 function debuggeeForSource(source) {
+  if (source && source.sessionId) return { tabId: source.tabId || state.tabId, sessionId: source.sessionId };
   return source && source.targetId ? { targetId: source.targetId } : { tabId: state.tabId };
 }
 
 function isCapturedSource(source) {
   if (!source) return false;
+  if (source.sessionId) return capturedSessions.has(source.sessionId);
   if (source.tabId === state.tabId) return true;
   return !!(source.targetId && capturedTargets.has(source.targetId));
 }
 
 function targetDescriptor(source) {
+  if (source && source.sessionId) {
+    var sessionInfo = capturedSessions.get(source.sessionId) || {};
+    return { targetId: sessionInfo.targetId || "", sessionId: source.sessionId, type: sessionInfo.type || "other", url: sessionInfo.url || "", title: sessionInfo.title || "" };
+  }
   if (source && source.targetId) {
     var info = capturedTargets.get(source.targetId) || targetInfoMap.get(source.targetId) || {};
     return { targetId: source.targetId, type: info.type || "other", url: info.url || "", title: info.title || "" };
@@ -260,7 +309,40 @@ function correlationForNow() {
 async function enableCaptureDomains(debuggee, targetType) {
   var methods = ["Network.enable", "Runtime.enable", "Log.enable", "Debugger.enable"];
   if (targetType === "page" || targetType === "iframe" || !targetType) methods.push("Page.enable");
-  for (var i = 0; i < methods.length; i += 1) await tryCommand(debuggee, methods[i]);
+  var failures = [];
+  for (var i = 0; i < methods.length; i += 1) {
+    try {
+      await command(debuggee, methods[i]);
+    } catch (error) {
+      failures.push({ method: methods[i], reason: error.message || String(error) });
+    }
+  }
+  if (failures.length) {
+    markCompletenessIssue("capture-domain-enable-failed", { debuggee: sourceKey(debuggee), failures: failures });
+    await addRecord("captureDomainEnableFailed", { debuggee: sourceKey(debuggee), targetType: targetType || "unknown", failures: failures });
+  }
+  if (failures.some(function (failure) { return failure.method === "Network.enable" || failure.method === "Runtime.enable"; })) {
+    throw new Error("required CDP capture domains could not be enabled");
+  }
+  return failures;
+}
+
+function updateTargetCounter() {
+  state.counters.targets = capturedTargets.size + capturedSessions.size;
+  schedulePersist();
+}
+
+function capturedSessionHasTarget(targetId) {
+  var found = false;
+  capturedSessions.forEach(function (info) {
+    if (info && info.targetId === targetId) found = true;
+  });
+  return found;
+}
+
+function rememberAllowedOrigin(url) {
+  var origin = WebCaptrueTargets.originForUrl(url);
+  if (origin && origin !== "null") allowedTargetOrigins.add(origin);
 }
 
 function targetRelatedToRoot(info) {
@@ -279,22 +361,146 @@ function targetRelatedToRoot(info) {
 }
 
 function capturableTargetType(type) {
-  return /^(iframe|worker|shared_worker|service_worker)$/.test(String(type || ""));
+  return WebCaptrueTargets.isCapturableType(type);
 }
 
-async function attachRelatedTarget(info) {
-  if (!state.active || !info || !info.targetId || capturedTargets.has(info.targetId)) return;
-  if (!capturableTargetType(info.type) || !targetRelatedToRoot(info)) return;
+async function attachRelatedTarget(rawInfo, fallbackRelated) {
+  var info = WebCaptrueTargets.normalize(rawInfo);
+  if (!state.active || !info || !info.targetId || capturedTargets.has(info.targetId) || capturedSessionHasTarget(info.targetId)) return;
+  if (!capturableTargetType(info.type) || (!fallbackRelated && !targetRelatedToRoot(info))) return;
   var debuggee = { targetId: info.targetId };
   try {
     await debuggerAttach(debuggee);
     capturedTargets.set(info.targetId, info);
-    state.counters.targets = capturedTargets.size;
-    schedulePersist();
+    updateTargetCounter();
     await enableCaptureDomains(debuggee, info.type);
-    await addRecord("targetAttached", { targetId: info.targetId, type: info.type, title: info.title || "", url: info.url || "", parentId: info.parentId || "", parentFrameId: info.parentFrameId || "" });
+    await tryCommand(debuggee, "Runtime.runIfWaitingForDebugger");
+    await addRecord("targetAttached", { mode: "targetId", targetId: info.targetId, type: info.type, title: info.title || "", url: info.url || "", parentId: info.parentId || "", parentFrameId: info.parentFrameId || "" });
   } catch (error) {
+    state.completeness.targetAttachFailures += 1;
+    markCompletenessIssue("target-attach-failed", { targetId: info.targetId, type: info.type, url: info.url || "", reason: error.message || String(error) });
     await addRecord("targetAttachFailed", { targetId: info.targetId, type: info.type, url: info.url || "", reason: error.message || String(error) });
+  }
+}
+
+async function enableFlatAutoAttach(debuggee) {
+  try {
+    await command(debuggee, "Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
+    return true;
+  } catch (error) {
+    markCompletenessIssue("flat-auto-attach-unavailable", { reason: error.message || String(error) });
+    await addRecord("targetAutoAttachFailed", { mode: "flat-session", reason: error.message || String(error) });
+    return false;
+  }
+}
+
+async function attachFlatSession(source, params) {
+  var info = WebCaptrueTargets.normalize(params && params.targetInfo);
+  var sessionId = params && params.sessionId;
+  if (!sessionId || !info.targetId || capturedSessions.has(sessionId)) return;
+  capturedSessions.set(sessionId, info);
+  targetInfoMap.set(info.targetId, info);
+  state.completeness.targetCandidates += 1;
+  updateTargetCounter();
+  var session = { tabId: source.tabId || state.tabId, sessionId: sessionId };
+  try {
+    await enableCaptureDomains(session, info.type);
+    await enableFlatAutoAttach(session);
+    await tryCommand(session, "Runtime.runIfWaitingForDebugger");
+    await addRecord("targetAttached", { mode: "flat-session", sessionId: sessionId, targetId: info.targetId, type: info.type, title: info.title || "", url: info.url || "" });
+  } catch (error) {
+    capturedSessions.delete(sessionId);
+    updateTargetCounter();
+    state.completeness.targetAttachFailures += 1;
+    markCompletenessIssue("target-session-enable-failed", { targetId: info.targetId, type: info.type, reason: error.message || String(error) });
+    await addRecord("targetAttachFailed", { mode: "flat-session", sessionId: sessionId, targetId: info.targetId, type: info.type, url: info.url || "", reason: error.message || String(error) });
+  }
+}
+
+async function attachExistingFlatTarget(rawInfo) {
+  var info = WebCaptrueTargets.normalize(rawInfo);
+  if (!state.active || !info.targetId || capturedSessionHasTarget(info.targetId)) return;
+  if (!WebCaptrueTargets.isFallbackCandidate(info, {
+    rootTargetId: rootTargetId,
+    rootTabId: state.tabId,
+    allowedOrigins: Array.from(allowedTargetOrigins)
+  })) return;
+  state.completeness.targetCandidates += 1;
+  try {
+    var result = await command({ tabId: state.tabId }, "Target.attachToTarget", { targetId: info.targetId, flatten: true });
+    if (!result.sessionId) throw new Error("Target.attachToTarget returned no sessionId");
+    await attachFlatSession({ tabId: state.tabId }, { sessionId: result.sessionId, targetInfo: info });
+  } catch (error) {
+    state.completeness.targetAttachFailures += 1;
+    markCompletenessIssue("target-attach-failed", { targetId: info.targetId, type: info.type, url: info.url || "", reason: error.message || String(error) });
+    await addRecord("targetAttachFailed", { mode: "flat-session-sweep", targetId: info.targetId, type: info.type, url: info.url || "", reason: error.message || String(error) });
+  }
+}
+
+async function pollLegacyTargets() {
+  if (!state.active || targetPollRunning) return;
+  targetPollRunning = true;
+  try {
+    state.completeness.targetScans += 1;
+    var newlySeen = [];
+    if (flatSessionsSupported) {
+      var protocolResult = await tryCommand({ tabId: state.tabId }, "Target.getTargets");
+      var protocolTargets = protocolResult && protocolResult.targetInfos || [];
+      for (var p = 0; p < protocolTargets.length; p += 1) {
+        var protocolInfo = WebCaptrueTargets.normalize(protocolTargets[p]);
+        targetInfoMap.set(protocolInfo.targetId, protocolInfo);
+        if (!WebCaptrueTargets.isFallbackCandidate(protocolInfo, {
+          rootTargetId: rootTargetId,
+          rootTabId: state.tabId,
+          allowedOrigins: Array.from(allowedTargetOrigins)
+        })) continue;
+        if (!legacySeenTargetIds.has(protocolInfo.targetId)) {
+          legacySeenTargetIds.add(protocolInfo.targetId);
+          newlySeen.push({ targetId: protocolInfo.targetId, type: protocolInfo.type, url: protocolInfo.url || "" });
+        }
+        await attachExistingFlatTarget(protocolInfo);
+      }
+      var globalTargets = await debuggerGetTargets();
+      for (var g = 0; g < globalTargets.length; g += 1) {
+        var globalInfo = WebCaptrueTargets.normalize(globalTargets[g]);
+        targetInfoMap.set(globalInfo.targetId, globalInfo);
+        if (!WebCaptrueTargets.isFallbackCandidate(globalInfo, {
+          rootTargetId: rootTargetId,
+          rootTabId: state.tabId,
+          allowedOrigins: Array.from(allowedTargetOrigins)
+        })) continue;
+        if (!legacySeenTargetIds.has(globalInfo.targetId)) {
+          legacySeenTargetIds.add(globalInfo.targetId);
+          newlySeen.push({ targetId: globalInfo.targetId, type: globalInfo.type, url: globalInfo.url || "" });
+        }
+        await attachRelatedTarget(globalInfo, true);
+      }
+      if (newlySeen.length) await addRecord("targetDiscovery", { mode: "flat-session-sweep", discovered: newlySeen });
+      return;
+    }
+    var targets = await debuggerGetTargets();
+    for (var i = 0; i < targets.length; i += 1) {
+      var info = WebCaptrueTargets.normalize(targets[i]);
+      if (info.type === "page" && info.tabId === state.tabId) rootTargetId = info.targetId;
+      targetInfoMap.set(info.targetId, info);
+      if (!WebCaptrueTargets.isFallbackCandidate(info, {
+        rootTargetId: rootTargetId,
+        rootTabId: state.tabId,
+        allowedOrigins: Array.from(allowedTargetOrigins)
+      })) continue;
+      if (!legacySeenTargetIds.has(info.targetId)) {
+        legacySeenTargetIds.add(info.targetId);
+        newlySeen.push({ targetId: info.targetId, type: info.type, url: info.url || "" });
+        state.completeness.targetCandidates += 1;
+      }
+      await attachRelatedTarget(info, true);
+    }
+    if (newlySeen.length) await addRecord("targetDiscovery", { mode: "chrome-debugger-poll", discovered: newlySeen });
+  } catch (error) {
+    markCompletenessIssue("target-poll-failed", { reason: error.message || String(error) });
+  } finally {
+    targetPollRunning = false;
+    if (state.active) targetPollTimer = setTimeout(pollLegacyTargets, 250);
   }
 }
 
@@ -309,9 +515,12 @@ async function discoverRelatedTargets() {
   var root = { tabId: state.tabId };
   var frameTree = await tryCommand(root, "Page.getFrameTree");
   rootFrameIds.clear();
+  allowedTargetOrigins.clear();
+  rememberAllowedOrigin(state.url);
   (function collectFrames(node) {
     if (!node || !node.frame) return;
     if (node.frame.id) rootFrameIds.add(node.frame.id);
+    rememberAllowedOrigin(node.frame.url);
     (node.childFrames || []).forEach(collectFrames);
   }(frameTree && frameTree.frameTree));
   await tryCommand(root, "Target.setDiscoverTargets", { discover: true });
@@ -319,10 +528,20 @@ async function discoverRelatedTargets() {
   var infos = result && result.targetInfos || [];
   infos.forEach(function (info) { targetInfoMap.set(info.targetId, info); });
   for (var j = 0; j < infos.length; j += 1) await attachRelatedTarget(infos[j]);
-  await addRecord("targetDiscovery", { rootTargetId: rootTargetId || "", discovered: infos.map(function (info) { return { targetId: info.targetId, type: info.type, url: info.url || "", parentId: info.parentId || "" }; }) });
+  flatSessionsSupported = WebCaptrueTargets.supportsFlatSessions(navigator.userAgent);
+  state.completeness.targetMode = flatSessionsSupported ? "flat-session" : "targetId-poll";
+  var flatEnabled = flatSessionsSupported ? await enableFlatAutoAttach(root) : false;
+  if (flatSessionsSupported && !flatEnabled) {
+    flatSessionsSupported = false;
+    state.completeness.targetMode = "targetId-poll-fallback";
+  }
+  await addRecord("targetDiscovery", { mode: state.completeness.targetMode, rootTargetId: rootTargetId || "", discovered: infos.map(function (info) { return { targetId: info.targetId, type: info.type, url: info.url || "", parentId: info.parentId || "" }; }) });
+  await pollLegacyTargets();
 }
 
 async function detachChildTargets() {
+  if (targetPollTimer) clearTimeout(targetPollTimer);
+  targetPollTimer = null;
   var ids = Array.from(capturedTargets.keys());
   for (var i = 0; i < ids.length; i += 1) {
     var debuggee = { targetId: ids[i] };
@@ -332,6 +551,6 @@ async function detachChildTargets() {
     expectedDetachKeys.delete(key);
   }
   capturedTargets.clear();
-  state.counters.targets = 0;
+  capturedSessions.clear();
+  updateTargetCounter();
 }
-

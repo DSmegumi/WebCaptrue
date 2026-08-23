@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>WebCaptrue Completeness Fixture</title>
+<h1>WebCaptrue Completeness Fixture</h1>
+<label>普通输入 <input id="normal" autocomplete="off"></label>
+<label>密码 <input id="password" type="password"></label>
+<button id="load">加载 API</button>
+<button id="submit">提交数据</button>
+<button id="error">触发异常</button>
+<button id="spa">SPA 路由</button>
+<pre id="output">ready</pre>
+<iframe src="/frame.html" title="同源 iframe"></iframe>
+<iframe src="http://127.0.0.1:8766/cross-frame.html" title="跨源 iframe"></iframe>
+<script src="/app.js"></script>

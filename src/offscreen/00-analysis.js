@@ -273,7 +273,109 @@ function unique(values) {
   return out;
 }
 
-function buildSummary(meta, records, apiIndex, workflow) {
+function buildCompleteness(meta, records) {
+  var byType = {};
+  records.forEach(function (record) {
+    if (!byType[record.type]) byType[record.type] = [];
+    byType[record.type].push(record);
+  });
+  var requests = byType.request || [];
+  var responses = byType.response || [];
+  var bodies = byType.responseBody || [];
+  var skippedBodies = byType.responseBodySkipped || [];
+  var excludedBodies = byType.responseBodyExcluded || [];
+  var failedLoads = byType.loadingFailed || [];
+  var responseKeys = {};
+  var bodyKeys = {};
+  var skippedBodyKeys = {};
+  var excludedBodyKeys = {};
+  var failedLoadKeys = {};
+  var requestByKey = {};
+  responses.forEach(function (record) { responseKeys[recordKey(record.data)] = record.data; });
+  bodies.forEach(function (record) { bodyKeys[recordKey(record.data)] = true; });
+  skippedBodies.forEach(function (record) { skippedBodyKeys[recordKey(record.data)] = record.data.reason || "unspecified"; });
+  excludedBodies.forEach(function (record) { excludedBodyKeys[recordKey(record.data)] = record.data.reason || "unspecified"; });
+  failedLoads.forEach(function (record) {
+    var data = record.data || {};
+    var payload = data.payload || {};
+    failedLoadKeys[data.requestKey || recordKey(payload)] = true;
+  });
+  requests.forEach(function (record) { requestByKey[recordKey(record.data)] = record.data; });
+
+  var requestsWithoutTerminalEvent = [];
+  Object.keys(requestByKey).forEach(function (key) {
+    if (!responseKeys[key] && !failedLoadKeys[key]) requestsWithoutTerminalEvent.push(key);
+  });
+
+  var responsesWithoutBodyOrReason = [];
+  if (!meta || !meta.options || meta.options.captureBodies !== false) {
+    Object.keys(responseKeys).forEach(function (key) {
+      var response = responseKeys[key] || {};
+      var request = requestByKey[key] || {};
+      var streamingResponse = request.resourceType === "EventSource" || /text\/event-stream/i.test(response.mimeType || "");
+      var bodyNotExpected = request.method === "HEAD" || response.status === 204 || response.status === 205 || response.status === 304 || streamingResponse;
+      if (!bodyNotExpected && !bodyKeys[key] && !skippedBodyKeys[key] && !excludedBodyKeys[key]) responsesWithoutBodyOrReason.push(key);
+    });
+  }
+
+  var completenessState = meta && meta.completeness || {};
+  var failureRecords = [];
+  ["targetAttachFailed", "targetAutoAttachFailed", "captureDomainEnableFailed", "contentScriptInjectionFailed", "clientStorageSnapshotSkipped", "captureError", "eventHandlingFailed"].forEach(function (type) {
+    (byType[type] || []).forEach(function (record) { failureRecords.push({ type: type, capturedAt: record.capturedAt, data: record.data }); });
+  });
+  var truncationRecords = [];
+  ["responseBodySkipped", "preloadedResourceSkipped", "scriptSourceSkipped", "fullPageScreenshotFallback"].forEach(function (type) {
+    (byType[type] || []).forEach(function (record) { truncationRecords.push({ type: type, capturedAt: record.capturedAt, data: record.data }); });
+  });
+  var exclusionRecords = [];
+  ["responseBodyExcluded", "scriptSourceExcluded"].forEach(function (type) {
+    (byType[type] || []).forEach(function (record) { exclusionRecords.push({ type: type, capturedAt: record.capturedAt, data: record.data }); });
+  });
+  var knownGapCount = requestsWithoutTerminalEvent.length + responsesWithoutBodyOrReason.length + failureRecords.length + truncationRecords.length + (completenessState.recordWriteFailures || 0);
+  return {
+    format: "webcaptrue-completeness",
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    verdict: knownGapCount ? "known-gaps" : "no-known-gaps",
+    assertionBoundary: "no-known-gaps means no gap was detected by these checks; it is not proof that the browser exposed every possible datum",
+    network: {
+      requestsObserved: requests.length,
+      responsesObserved: responses.length,
+      loadingFailures: failedLoads.length,
+      responseBodiesCaptured: bodies.length,
+      responseBodiesSkippedWithReason: skippedBodies.length,
+      requestsWithoutTerminalEvent: requestsWithoutTerminalEvent,
+      responsesWithoutBodyOrReason: responsesWithoutBodyOrReason
+    },
+    targets: {
+      mode: completenessState.targetMode || "unknown",
+      scans: completenessState.targetScans || 0,
+      candidates: completenessState.targetCandidates || 0,
+      attached: (byType.targetAttached || []).length,
+      attachFailures: (byType.targetAttachFailed || []).length + (byType.targetAutoAttachFailed || []).length,
+      discoveries: (byType.targetDiscovery || []).length
+    },
+    storage: {
+      snapshots: (byType.clientStorageSnapshot || []).length,
+      skippedFrames: (byType.clientStorageSnapshotSkipped || []).length
+    },
+    pageState: {
+      htmlSnapshots: (byType.domSnapshot || []).length,
+      structuredSnapshots: (byType.domStructuredSnapshot || []).length,
+      screenshots: (byType.screenshot || []).length,
+      screenshotFallbacks: (byType.fullPageScreenshotFallback || []).length
+    },
+    persistence: {
+      recordWriteFailures: completenessState.recordWriteFailures || 0
+    },
+    failures: failureRecords,
+    truncations: truncationRecords,
+    exclusions: exclusionRecords,
+    runtimeIssues: completenessState.issues || []
+  };
+}
+
+function buildSummary(meta, records, apiIndex, workflow, completeness) {
   var byType = {};
   records.forEach(function (r) { byType[r.type] = (byType[r.type] || 0) + 1; });
   var requestRecords = records.filter(function (r) { return r.type === "request"; });
@@ -308,8 +410,10 @@ function buildSummary(meta, records, apiIndex, workflow) {
     graphqlOperations: graphqlOperations,
     correlatedActions: workflow.actions.filter(function (a) { return a.requests.length > 0; }).length,
     uncorrelatedApiRequests: workflow.uncorrelatedRequests.length,
+    completeness: completeness || null,
     recommendedEntryPoints: [
       "ai/summary.json",
+      "integrity/completeness.json",
       "ai/workflow.json",
       "api/api-index.json",
       "network/session.har",

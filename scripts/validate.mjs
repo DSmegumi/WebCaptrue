@@ -13,6 +13,7 @@ if (manifest.version !== packageJson.version) errors.push("manifest.json and pac
 
 if (manifest.manifest_version !== 3) errors.push("manifest_version must be 3");
 if (String(manifest.minimum_chrome_version) !== "109") errors.push("minimum_chrome_version must remain 109");
+if (!manifest.commands || !manifest.commands["toggle-capture"]) errors.push("missing toggle-capture keyboard command");
 for (const permission of ["debugger", "downloads", "offscreen", "storage", "tabs", "webNavigation"]) {
   if (!manifest.permissions.includes(permission)) errors.push(`missing permission: ${permission}`);
 }
@@ -21,13 +22,13 @@ const required = [
   "popup.html", "popup.css", "popup.js", "offscreen.html",
   "src/background.js", "src/background/00-core.js", "src/background/10-capture.js", "src/background/20-events.js",
   "src/content.js", "src/offscreen.js", "src/offscreen/00-analysis.js", "src/offscreen/10-export.js",
-  "src/lib/db.js", "src/lib/zip.js", "AGENTS.md", "README.md", "docs/PROJECT_PLAN.md", "scripts/smoke.mjs"
+  "src/lib/db.js", "src/lib/sanitize.js", "src/lib/targets.js", "src/lib/zip.js", "AGENTS.md", "README.md", "docs/PROJECT_PLAN.md", "scripts/integrity.mjs", "scripts/smoke.mjs"
 ];
 for (const file of required) {
   if (!fs.existsSync(path.join(root, file))) errors.push(`missing file: ${file}`);
 }
 
-const jsFiles = ["popup.js", "src/background.js", "src/background/00-core.js", "src/background/10-capture.js", "src/background/20-events.js", "src/content.js", "src/offscreen.js", "src/offscreen/00-analysis.js", "src/offscreen/10-export.js", "src/lib/db.js", "src/lib/zip.js"];
+const jsFiles = ["popup.js", "src/background.js", "src/background/00-core.js", "src/background/10-capture.js", "src/background/20-events.js", "src/content.js", "src/offscreen.js", "src/offscreen/00-analysis.js", "src/offscreen/10-export.js", "src/lib/db.js", "src/lib/sanitize.js", "src/lib/targets.js", "src/lib/zip.js"];
 for (const file of jsFiles) {
   try {
     execFileSync(process.execPath, ["--check", path.join(root, file)], { stdio: "pipe" });

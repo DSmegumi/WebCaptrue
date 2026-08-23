@@ -1,6 +1,9 @@
 (function () {
   "use strict";
 
+  if (window.__webcaptrueContentInstalled) return;
+  window.__webcaptrueContentInstalled = true;
+
   var inputTimers = new WeakMap();
   var MAX_IDB_DATABASES = 20;
   var MAX_IDB_STORES = 50;
@@ -132,7 +135,8 @@
       for (var i = 0; i < storage.length; i += 1) {
         var key = storage.key(i);
         var value = storage.getItem(key);
-        out[key] = isSensitiveKey(key) ? "[REDACTED]" : (String(value || "").length > 12000 ? String(value).slice(0, 12000) + "...[TRUNCATED]" : value);
+        var sanitized = WebCaptrueSanitize.storageValue(key, value);
+        out[key] = sanitized.length > 12000 ? sanitized.slice(0, 12000) + "...[TRUNCATED]" : sanitized;
       }
     } catch (error) {
       out._error = error.message || String(error);
@@ -324,6 +328,14 @@
       emit("input", target);
       inputTimers.delete(target);
     }, 500));
+  }, true);
+
+  document.addEventListener("keydown", function (event) {
+    if (!event.isTrusted || !event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return;
+    if (String(event.key || "").toLowerCase() !== "y") return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    chrome.runtime.sendMessage({ type: "TOGGLE_CAPTURE_FROM_PAGE" }, function () { void chrome.runtime.lastError; });
   }, true);
 
   chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {

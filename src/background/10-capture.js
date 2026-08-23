@@ -10,7 +10,9 @@ async function capturePageState(label) {
       awaitPromise: false
     });
     await addRecord("domSnapshot", { label: label, html: dom.result && dom.result.value || "" });
-  } catch (_) {}
+  } catch (error) {
+    await addRecord("captureError", { operation: "dom-html-snapshot", label: label, reason: error.message || String(error) });
+  }
   try {
     var structured = await command(debuggee, "DOMSnapshot.captureSnapshot", {
       computedStyles: [],
@@ -18,7 +20,9 @@ async function capturePageState(label) {
       includePaintOrder: false
     });
     await addRecord("domStructuredSnapshot", { label: label, snapshot: structured });
-  } catch (_) {}
+  } catch (error2) {
+    await addRecord("captureError", { operation: "dom-structured-snapshot", label: label, reason: error2.message || String(error2) });
+  }
 }
 
 async function captureClientStorage(label) {
@@ -55,7 +59,9 @@ async function captureVisibleScreenshot(label, force) {
     state.counters.screenshots += 1;
     schedulePersist();
     await addRecord("screenshot", { label: label, mode: "visible", dataUrl: dataUrl });
-  } catch (_) {}
+  } catch (error) {
+    await addRecord("captureError", { operation: "visible-screenshot", label: label, reason: error.message || String(error) });
+  }
 }
 
 async function captureFullPageScreenshot(label) {
@@ -98,7 +104,8 @@ async function captureExistingResources() {
   var tree;
   try {
     tree = await command(debuggee, "Page.getResourceTree");
-  } catch (_) {
+  } catch (error) {
+    await addRecord("captureError", { operation: "resource-tree", reason: error.message || String(error) });
     return;
   }
 
@@ -159,10 +166,17 @@ async function startCapture(tabId, options) {
   };
   requestMap.clear();
   capturedTargets.clear();
+  capturedSessions.clear();
   targetInfoMap.clear();
   rootFrameIds.clear();
+  allowedTargetOrigins.clear();
   expectedDetachKeys.clear();
+  legacySeenTargetIds.clear();
   rootTargetId = null;
+  flatSessionsSupported = false;
+  if (targetPollTimer) clearTimeout(targetPollTimer);
+  targetPollTimer = null;
+  targetPollRunning = false;
   lastInteraction = null;
   lastScreenshotAt = 0;
   await db.clearSession(sessionId);
@@ -177,6 +191,13 @@ async function startCapture(tabId, options) {
   }
   await addRecord("sessionStart", { url: state.url, title: state.title, options: state.options, userAgent: navigator.userAgent });
   schedulePersist();
+  try {
+    var injectedFrames = await executeContentScript(tabId);
+    await addRecord("contentScriptReady", { frameCount: injectedFrames.length });
+  } catch (error2) {
+    markCompletenessIssue("content-script-injection-failed", { reason: error2.message || String(error2) });
+    await addRecord("contentScriptInjectionFailed", { reason: error2.message || String(error2) });
+  }
   await discoverRelatedTargets();
   await captureExistingResources();
   await capturePageState("start");
@@ -196,6 +217,7 @@ async function stopCapture() {
   await captureFullPageScreenshot("final");
   await addRecord("sessionStop", { stoppedAt: new Date().toISOString(), counters: state.counters });
   await detachChildTargets();
+  await tryCommand(debuggee, "Target.setAutoAttach", { autoAttach: false, waitForDebuggerOnStart: false, flatten: flatSessionsSupported });
   await tryCommand(debuggee, "Target.setDiscoverTargets", { discover: false });
   expectedDetachKeys.add(sourceKey(debuggee));
   await debuggerDetach(debuggee);
@@ -223,4 +245,3 @@ function compactDate(date) {
   function p(n) { return String(n).padStart(2, "0"); }
   return date.getFullYear() + p(date.getMonth() + 1) + p(date.getDate()) + "_" + p(date.getHours()) + p(date.getMinutes()) + p(date.getSeconds());
 }
-

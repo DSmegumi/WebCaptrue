@@ -5,6 +5,21 @@ async function handleDebuggerEvent(source, method, params) {
   var debuggee = debuggeeForSource(source);
   var target = targetDescriptor(source);
 
+  if (method === "Target.attachedToTarget") {
+    await attachFlatSession(source, params);
+    return;
+  }
+
+  if (method === "Target.detachedFromTarget") {
+    if (params.sessionId && capturedSessions.has(params.sessionId)) {
+      var detachedInfo = capturedSessions.get(params.sessionId);
+      capturedSessions.delete(params.sessionId);
+      updateTargetCounter();
+      await addRecord("targetDetached", { mode: "flat-session", sessionId: params.sessionId, targetId: detachedInfo.targetId || "", reason: params.reason || "" });
+    }
+    return;
+  }
+
   if (method === "Target.targetCreated" || method === "Target.targetInfoChanged") {
     var info = params.targetInfo;
     if (info && info.targetId) {
@@ -20,8 +35,7 @@ async function handleDebuggerEvent(source, method, params) {
       targetInfoMap.delete(destroyedId);
       if (capturedTargets.has(destroyedId)) {
         capturedTargets.delete(destroyedId);
-        state.counters.targets = capturedTargets.size;
-        schedulePersist();
+        updateTargetCounter();
         await addRecord("targetDestroyed", { targetId: destroyedId });
       }
     }
@@ -115,6 +129,11 @@ async function handleDebuggerEvent(source, method, params) {
     if (!state.options.captureBodies) return;
     var reqKey = requestKey(source, params.requestId);
     var knownRequest = requestMap.get(reqKey) || {};
+    var responseUrl = (knownRequest.response && knownRequest.response.url) || knownRequest.url || "";
+    if (WebCaptrueTargets.isBrowserExtensionUrl(responseUrl)) {
+      await addRecord("responseBodyExcluded", { requestId: params.requestId, requestKey: reqKey, target: target, url: responseUrl, reason: "browser extension artifact outside webpage origin" });
+      return;
+    }
     if (params.encodedDataLength > MAX_BODY_BYTES) {
       await addRecord("responseBodySkipped", { requestId: params.requestId, requestKey: reqKey, target: target, reason: "encodedDataLength exceeds limit", encodedDataLength: params.encodedDataLength });
       return;
@@ -145,7 +164,7 @@ async function handleDebuggerEvent(source, method, params) {
   }
 
   if (method === "Network.loadingFailed") {
-    await addRecord("loadingFailed", { target: target, payload: params });
+    await addRecord("loadingFailed", { requestId: params.requestId, requestKey: requestKey(source, params.requestId), target: target, payload: params });
     return;
   }
 
@@ -173,6 +192,10 @@ async function handleDebuggerEvent(source, method, params) {
       target: target
     };
     await addRecord("scriptParsed", scriptMeta);
+    if (WebCaptrueTargets.isBrowserExtensionUrl(params.url || "")) {
+      await addRecord("scriptSourceExcluded", { scriptId: params.scriptId, url: params.url || "", target: target, reason: "browser extension artifact outside webpage origin" });
+      return;
+    }
     try {
       var script = await command(debuggee, "Debugger.getScriptSource", { scriptId: params.scriptId });
       var sourceText = script.scriptSource || "";
@@ -181,7 +204,9 @@ async function handleDebuggerEvent(source, method, params) {
       } else {
         await addRecord("scriptSourceSkipped", { scriptId: params.scriptId, url: params.url || "", target: target, reason: "source exceeds 2 MB" });
       }
-    } catch (_) {}
+    } catch (error) {
+      await addRecord("scriptSourceSkipped", { scriptId: params.scriptId, url: params.url || "", target: target, reason: error.message || String(error) });
+    }
     return;
   }
 
@@ -220,6 +245,7 @@ async function handleDebuggerEvent(source, method, params) {
 
   if (method === "Page.frameNavigated") {
     if (!source.targetId && params.frame && params.frame.id) rootFrameIds.add(params.frame.id);
+    if (params.frame && params.frame.url) rememberAllowedOrigin(params.frame.url);
     await addRecord("navigation", { target: target, frame: params.frame || params });
     if (!source.targetId && params.frame && !params.frame.parentId) {
       setTimeout(function () { capturePageState("navigation"); }, 700);
@@ -229,7 +255,10 @@ async function handleDebuggerEvent(source, method, params) {
 }
 
 chrome.debugger.onEvent.addListener(function (source, method, params) {
-  handleDebuggerEvent(source, method, params || {}).catch(function () {});
+  handleDebuggerEvent(source, method, params || {}).catch(function (error) {
+    markCompletenessIssue("debugger-event-handling-failed", { source: sourceKey(source), method: method, reason: error.message || String(error) });
+    addRecord("eventHandlingFailed", { source: sourceKey(source), method: method, reason: error.message || String(error) });
+  });
 });
 
 chrome.debugger.onDetach.addListener(function (source, reason) {
@@ -237,7 +266,7 @@ chrome.debugger.onDetach.addListener(function (source, reason) {
   if (expectedDetachKeys.has(key)) return;
   if (source.targetId && capturedTargets.has(source.targetId)) {
     capturedTargets.delete(source.targetId);
-    state.counters.targets = capturedTargets.size;
+    updateTargetCounter();
     addRecord("targetDetached", { targetId: source.targetId, reason: reason });
     schedulePersist();
     return;
@@ -257,6 +286,22 @@ chrome.tabs.onRemoved.addListener(function (tabId) {
     addRecord("tabClosed", {});
     schedulePersist();
   }
+});
+
+chrome.commands.onCommand.addListener(function (commandName) {
+  if (commandName !== "toggle-capture") return;
+  Promise.resolve().then(async function () {
+    if (state.active) {
+      await stopCapture();
+      return;
+    }
+    var tab = await getActiveTab();
+    if (!tab || typeof tab.id !== "number") throw new Error("No active tab available for capture");
+    await startCapture(tab.id, { captureBodies: true, autoScreenshots: true, captureClientStorage: true });
+  }).catch(function (error) {
+    state.lastError = "Capture shortcut failed: " + (error.message || String(error));
+    markCompletenessIssue("capture-shortcut-failed", { reason: error.message || String(error) });
+  });
 });
 
 chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
@@ -297,6 +342,15 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
   Promise.resolve().then(async function () {
     if (message.type === "GET_STATUS") return { ok: true, state: cloneState() };
     if (message.type === "START_CAPTURE") return { ok: true, state: await startCapture(message.tabId, message.options || {}) };
+    if (message.type === "TOGGLE_CAPTURE_FROM_PAGE") {
+      if (!sender.tab || typeof sender.tab.id !== "number") return { ok: false, error: "Capture shortcut requires a normal webpage tab" };
+      if (state.active) {
+        if (sender.tab.id !== state.tabId) return { ok: false, error: "Another tab is currently being captured" };
+        var stoppedByPage = await stopCapture();
+        return { ok: true, state: stoppedByPage.state, filename: stoppedByPage.filename };
+      }
+      return { ok: true, state: await startCapture(sender.tab.id, { captureBodies: true, autoScreenshots: true, captureClientStorage: true }) };
+    }
     if (message.type === "STOP_CAPTURE") {
       var result = await stopCapture();
       return { ok: true, state: result.state, filename: result.filename };

@@ -29,7 +29,10 @@ for (const marker of ["Target.setDiscoverTargets", "targetId", "captureFullPageS
 for (const marker of ["indexedDB.databases", "dumpCacheStorage", "REQUEST_CLIENT_STORAGE"]) {
   if (!content.includes(marker)) throw new Error(`client storage marker missing: ${marker}`);
 }
-for (const marker of ["ai/summary.json", "ai/workflow.json", "api/api-index.json", "buildApiIndex", "buildWorkflow"]) {
+if (!content.includes("event.isTrusted") || !content.includes("TOGGLE_CAPTURE_FROM_PAGE") || !background.includes("TOGGLE_CAPTURE_FROM_PAGE")) {
+  throw new Error("trusted capture shortcut path missing");
+}
+for (const marker of ["ai/summary.json", "ai/workflow.json", "api/api-index.json", "integrity/completeness.json", "buildApiIndex", "buildWorkflow", "buildCompleteness"]) {
   if (!offscreen.includes(marker)) throw new Error(`AI export marker missing: ${marker}`);
 }
 

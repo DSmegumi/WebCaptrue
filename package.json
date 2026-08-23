@@ -4,6 +4,7 @@
   "private": true,
   "description": "Chrome 109-compatible offline web capture extension",
   "scripts": {
-    "test": "node scripts/validate.mjs && node scripts/smoke.mjs"
+    "test": "node scripts/validate.mjs && node scripts/integrity.mjs && node scripts/smoke.mjs",
+    "test:e2e:fixture": "node tests/e2e/server.mjs"
   }
 }

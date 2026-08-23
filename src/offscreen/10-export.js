@@ -56,7 +56,9 @@ function buildHar(requests, responses, bodies) {
 }
 
 async function exportSession(sessionId, meta) {
-  var records = await db.getSessionRecords(sessionId);
+  var rawRecords = await db.getSessionRecords(sessionId);
+  var sanitizedExport = WebCaptrueSanitize.exportRecords(rawRecords);
+  var records = sanitizedExport.records;
   var byType = {};
   records.forEach(function (r) {
     if (!byType[r.type]) byType[r.type] = [];
@@ -68,7 +70,9 @@ async function exportSession(sessionId, meta) {
   var interactions = byType.interaction || [];
   var apiIndex = buildApiIndex(requests, responses, bodies);
   var workflow = buildWorkflow(interactions, requests, responses);
-  var summary = buildSummary(meta, records, apiIndex, workflow);
+  var completeness = buildCompleteness(meta, records);
+  completeness.redactions = { count: sanitizedExport.redactions.length, stage: "export", structurePreserved: true };
+  var summary = buildSummary(meta, records, apiIndex, workflow, completeness);
   var files = [];
 
   files.push(textFile("manifest.json", {
@@ -77,16 +81,22 @@ async function exportSession(sessionId, meta) {
     extensionVersion: EXTENSION_VERSION,
     minimumChromeVersion: 109,
     exportedAt: new Date().toISOString(),
-    session: meta
+    session: meta,
+    completenessVerdict: completeness.verdict
   }));
   files.push(textFile("README.txt",
     "WebCaptrue offline capture\n\n" +
-    "Start AI analysis with ai/summary.json, ai/workflow.json and api/api-index.json.\n" +
+    "Start AI analysis with integrity/completeness.json, ai/summary.json, ai/workflow.json and api/api-index.json.\n" +
     "This archive may contain internal URLs, request/response bodies and business data.\n" +
     "Cookie, Authorization and Set-Cookie headers are redacted by default.\n" +
     "Use only where you are authorized to inspect the captured system.\n"
   ));
   files.push(textFile("ai/summary.json", summary));
+  files.push(textFile("integrity/completeness.json", completeness));
+  files.push(textFile("integrity/failures.jsonl", completeness.failures.map(function (item) { return JSON.stringify(item); }).join("\n") + (completeness.failures.length ? "\n" : "")));
+  files.push(textFile("integrity/truncations.jsonl", completeness.truncations.map(function (item) { return JSON.stringify(item); }).join("\n") + (completeness.truncations.length ? "\n" : "")));
+  files.push(textFile("integrity/exclusions.jsonl", completeness.exclusions.map(function (item) { return JSON.stringify(item); }).join("\n") + (completeness.exclusions.length ? "\n" : "")));
+  files.push(textFile("integrity/redactions.jsonl", sanitizedExport.redactions.map(function (item) { return JSON.stringify(item); }).join("\n") + (sanitizedExport.redactions.length ? "\n" : "")));
   files.push(textFile("ai/workflow.json", workflow));
   files.push(textFile("ai/analysis-guide.md",
     "# WebCaptrue analysis entrypoint\n\n" +
@@ -96,7 +106,17 @@ async function exportSession(sessionId, meta) {
     "4. Use `../network/session.har` and request/response JSONL for exact traffic.\n" +
     "5. Use `../runtime/scripts/`, `../dom/`, and `../storage/` to trace implementation details.\n"
   ));
-  files.push(textFile("timeline.jsonl", records.map(function (r) { return JSON.stringify(r); }).join("\n") + "\n"));
+  files.push(textFile("timeline.jsonl", records.map(function (r) {
+    var copy = JSON.parse(JSON.stringify(r));
+    if (copy.type === "responseBody" && copy.data) copy.data.body = "[STORED IN network/response-bodies.jsonl AND resources/]";
+    if (copy.type === "preloadedResource" && copy.data) copy.data.body = "[STORED IN resources/preloaded/]";
+    if (copy.type === "scriptSource" && copy.data) copy.data.source = "[STORED IN runtime/scripts/]";
+    if (copy.type === "screenshot" && copy.data) copy.data.dataUrl = "[STORED IN screenshots/]";
+    if (copy.type === "domSnapshot" && copy.data) copy.data.html = "[STORED IN dom/]";
+    if (copy.type === "domStructuredSnapshot" && copy.data) copy.data.snapshot = "[STORED IN dom/]";
+    if (copy.type === "clientStorageSnapshot" && copy.data) copy.data.snapshot = "[STORED IN storage/client/]";
+    return JSON.stringify(copy);
+  }).join("\n") + "\n"));
   files.push(textFile("network/requests.jsonl", jsonl(requests)));
   files.push(textFile("network/responses.jsonl", jsonl(responses)));
   files.push(textFile("network/response-bodies.jsonl", jsonl(bodies)));
@@ -105,7 +125,7 @@ async function exportSession(sessionId, meta) {
   files.push(textFile("interactions/actions.jsonl", jsonl(interactions)));
   files.push(textFile("runtime/console.jsonl", jsonl((byType.console || []).concat(byType.log || []))));
   files.push(textFile("runtime/exceptions.jsonl", jsonl(byType.exception || [])));
-  files.push(textFile("runtime/targets.jsonl", jsonl((byType.targetAttached || []).concat(byType.targetAttachFailed || []).concat(byType.targetDetached || []).concat(byType.targetDestroyed || []))));
+  files.push(textFile("runtime/targets.jsonl", jsonl((byType.targetDiscovery || []).concat(byType.targetAttached || []).concat(byType.targetAttachFailed || []).concat(byType.targetAutoAttachFailed || []).concat(byType.targetDetached || []).concat(byType.targetDestroyed || []))));
   files.push(textFile("network/websocket.jsonl", jsonl(byType.webSocket || [])));
   files.push(textFile("network/eventsource.jsonl", jsonl(byType.eventSource || [])));
 
@@ -156,7 +176,8 @@ async function exportSession(sessionId, meta) {
     generatedAt: new Date().toISOString(),
     logicalCounts: summary.counts,
     exportedFileCountBeforeIndex: files.length,
-    directories: ["ai", "api", "network", "interactions", "runtime", "dom", "storage", "screenshots", "resources"]
+    directories: ["ai", "api", "network", "interactions", "runtime", "dom", "storage", "screenshots", "resources", "integrity"],
+    completenessVerdict: completeness.verdict
   }));
 
   var blob = WebCaptrueZip.createZip(files);
