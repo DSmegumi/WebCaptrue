@@ -1,5 +1,28 @@
 "use strict";
 
+function responseRecordFromPayload(requestId, key, resourceType, timestamp, res, target, redirected) {
+  res = res || {};
+  return {
+    requestId: requestId,
+    requestKey: key,
+    resourceType: resourceType,
+    timestamp: timestamp,
+    url: res.url,
+    status: res.status,
+    statusText: res.statusText,
+    mimeType: res.mimeType,
+    protocol: res.protocol,
+    remoteIPAddress: res.remoteIPAddress,
+    remotePort: res.remotePort,
+    fromDiskCache: !!res.fromDiskCache,
+    fromServiceWorker: !!res.fromServiceWorker,
+    headers: Object.assign({}, res.headers || {}),
+    timing: res.timing || null,
+    redirected: !!redirected,
+    target: target
+  };
+}
+
 async function handleDebuggerEvent(source, method, params) {
   if (!state.active || !isCapturedSource(source)) return;
   var debuggee = debuggeeForSource(source);
@@ -45,6 +68,16 @@ async function handleDebuggerEvent(source, method, params) {
   if (method === "Network.requestWillBeSent") {
     var req = params.request || {};
     var correlation = correlationForNow();
+    if (params.redirectResponse) {
+      var redirectKey = requestKey(source, params.requestId);
+      var redirectResponse = responseRecordFromPayload(params.requestId, redirectKey, params.type, params.timestamp, params.redirectResponse, target, true);
+      var redirectedRequest = requestMap.get(redirectKey) || {};
+      redirectedRequest.response = redirectResponse;
+      requestMap.set(redirectKey, redirectedRequest);
+      state.counters.responses += 1;
+      await addRecord("response", redirectResponse);
+      advanceRequestGeneration(source, params.requestId);
+    }
     var rec = {
       requestId: params.requestId,
       requestKey: requestKey(source, params.requestId),
@@ -56,8 +89,8 @@ async function handleDebuggerEvent(source, method, params) {
       wallTime: params.wallTime,
       method: req.method,
       url: req.url,
-      headers: redactHeaders(req.headers),
-      postData: req.hasPostData ? sanitizePayload(req.postData || "[POST DATA NOT AVAILABLE]", (req.headers && (req.headers["Content-Type"] || req.headers["content-type"])) || "") : null,
+      headers: Object.assign({}, req.headers || {}),
+      postData: req.hasPostData ? (req.postData || "[POST DATA NOT AVAILABLE]") : null,
       initiator: params.initiator || null,
       target: target,
       interaction: correlation
@@ -75,9 +108,9 @@ async function handleDebuggerEvent(source, method, params) {
       requestId: params.requestId,
       requestKey: requestKey(source, params.requestId),
       target: target,
-      headers: redactHeaders(params.headers || {}),
+      headers: Object.assign({}, params.headers || {}),
       associatedCookies: (params.associatedCookies || []).map(function (item) {
-        return { blockedReasons: item.blockedReasons || [], cookie: item.cookie ? { name: item.cookie.name, value: "[REDACTED]", domain: item.cookie.domain, path: item.cookie.path } : null };
+        return { blockedReasons: item.blockedReasons || [], cookie: item.cookie || null };
       })
     });
     return;
@@ -89,7 +122,7 @@ async function handleDebuggerEvent(source, method, params) {
       requestKey: requestKey(source, params.requestId),
       target: target,
       statusCode: params.statusCode,
-      headers: redactHeaders(params.headers || {}),
+      headers: Object.assign({}, params.headers || {}),
       blockedCookies: (params.blockedCookies || []).map(function (item) { return { blockedReasons: item.blockedReasons || [] }; })
     });
     return;
@@ -97,24 +130,7 @@ async function handleDebuggerEvent(source, method, params) {
 
   if (method === "Network.responseReceived") {
     var res = params.response || {};
-    var responseRec = {
-      requestId: params.requestId,
-      requestKey: requestKey(source, params.requestId),
-      resourceType: params.type,
-      timestamp: params.timestamp,
-      url: res.url,
-      status: res.status,
-      statusText: res.statusText,
-      mimeType: res.mimeType,
-      protocol: res.protocol,
-      remoteIPAddress: res.remoteIPAddress,
-      remotePort: res.remotePort,
-      fromDiskCache: !!res.fromDiskCache,
-      fromServiceWorker: !!res.fromServiceWorker,
-      headers: redactHeaders(res.headers),
-      timing: res.timing || null,
-      target: target
-    };
+    var responseRec = responseRecordFromPayload(params.requestId, requestKey(source, params.requestId), params.type, params.timestamp, res, target, false);
     var knownKey = requestKey(source, params.requestId);
     var known = requestMap.get(knownKey) || {};
     known.response = responseRec;
@@ -155,7 +171,7 @@ async function handleDebuggerEvent(source, method, params) {
         mimeType: responseMime,
         resourceType: knownRequest.resourceType || "",
         base64Encoded: !!body.base64Encoded,
-        body: body.base64Encoded ? bodyText : sanitizePayload(bodyText, responseMime)
+        body: bodyText
       });
     } catch (error) {
       await addRecord("responseBodySkipped", { requestId: params.requestId, requestKey: reqKey, target: target, reason: error.message || String(error) });
@@ -255,10 +271,13 @@ async function handleDebuggerEvent(source, method, params) {
 }
 
 chrome.debugger.onEvent.addListener(function (source, method, params) {
-  handleDebuggerEvent(source, method, params || {}).catch(function (error) {
+  var pending = handleDebuggerEvent(source, method, params || {}).catch(function (error) {
     markCompletenessIssue("debugger-event-handling-failed", { source: sourceKey(source), method: method, reason: error.message || String(error) });
-    addRecord("eventHandlingFailed", { source: sourceKey(source), method: method, reason: error.message || String(error) });
+    return addRecord("eventHandlingFailed", { source: sourceKey(source), method: method, reason: error.message || String(error) });
+  }).finally(function () {
+    pendingDebuggerEvents.delete(pending);
   });
+  pendingDebuggerEvents.add(pending);
 });
 
 chrome.debugger.onDetach.addListener(function (source, reason) {

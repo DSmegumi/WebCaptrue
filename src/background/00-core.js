@@ -8,11 +8,13 @@ var STATE_KEY = "webcaptrueRuntimeState";
 var SETTINGS_KEY = "webcatrueSettings";
 var db = new WebCaptrueDB();
 var requestMap = new Map();
+var requestGenerations = new Map();
 var capturedTargets = new Map();
 var capturedSessions = new Map();
 var targetInfoMap = new Map();
 var rootFrameIds = new Set();
 var allowedTargetOrigins = new Set();
+var allowedTargetUrls = new Set();
 var expectedDetachKeys = new Set();
 var rootTargetId = null;
 var flatSessionsSupported = false;
@@ -22,6 +24,7 @@ var legacySeenTargetIds = new Set();
 var lastInteraction = null;
 var lastScreenshotAt = 0;
 var persistTimer = null;
+var pendingDebuggerEvents = new Set();
 
 var state = freshState();
 
@@ -75,9 +78,9 @@ function debuggerDetach(debuggee) {
 }
 
 function debuggerGetTargets() {
-  return new Promise(function (resolve) {
+  return new Promise(function (resolve, reject) {
     chrome.debugger.getTargets(function (targets) {
-      if (chrome.runtime.lastError) resolve([]);
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
       else resolve(targets || []);
     });
   });
@@ -200,47 +203,6 @@ function markCompletenessIssue(code, detail) {
   schedulePersist();
 }
 
-function isSensitiveKey(name) {
-  return /(?:pass(?:word)?|passwd|pwd|token|access[_-]?token|refresh[_-]?token|secret|session[_-]?id|authorization|cookie|api[_-]?key)/i.test(String(name || ""));
-}
-
-function redactStructuredValue(value) {
-  if (Array.isArray(value)) return value.map(redactStructuredValue);
-  if (value && typeof value === "object") {
-    var out = {};
-    Object.keys(value).forEach(function (key) {
-      out[key] = isSensitiveKey(key) ? "[REDACTED]" : redactStructuredValue(value[key]);
-    });
-    return out;
-  }
-  return value;
-}
-
-function sanitizePayload(text, contentType) {
-  if (typeof text !== "string" || !text) return text;
-  var mime = String(contentType || "").toLowerCase();
-  if (mime.indexOf("json") >= 0 || /^[\s]*[]{/.test(text)) {
-    try { return JSON.stringify(redactStructuredValue(JSON.parse(text))); } catch (_) {}
-  }
-  if (mime.indexOf("application/x-www-form-urlencoded") >= 0) {
-    try {
-      var params = new URLSearchParams(text);
-      Array.from(params.keys()).forEach(function (key) { if (isSensitiveKey(key)) params.set(key, "[REDACTED]"); });
-      return params.toString();
-    } catch (_) {}
-  }
-  return text.replace(/((?:password|passwd|pwd|access[_-]?token|refresh[_-]?token|api[_-]?key|secret|authorization)\s*[=:]\s*)(["'])(.*?)\2/ig, "$1$2[REDACTED]$2");
-}
-
-function redactHeaders(headers) {
-  var out = {};
-  Object.keys(headers || {}).forEach(function (name) {
-    if (/^(authorization|proxy-authorization|cookie|set-cookie)$/i.test(name)) out[name] = "[REDACTED]";
-    else out[name] = headers[name];
-  });
-  return out;
-}
-
 function addRecord(type, data) {
   if (!state.sessionId) return Promise.resolve();
   return db.add({
@@ -263,6 +225,10 @@ function sourceKey(source) {
   if (source && source.sessionId) return "session:" + (source.tabId || state.tabId) + ":" + source.sessionId;
   if (source && source.targetId) return "target:" + source.targetId;
   return "tab:" + (source && source.tabId);
+}
+
+function requestBaseKey(source, requestId) {
+  return sourceKey(source) + "|" + requestId;
 }
 
 function debuggeeForSource(source) {
@@ -290,7 +256,26 @@ function targetDescriptor(source) {
 }
 
 function requestKey(source, requestId) {
-  return sourceKey(source) + "|" + requestId;
+  var base = requestBaseKey(source, requestId);
+  var generation = requestGenerations.get(base) || 0;
+  return base + (generation ? "#redirect-" + generation : "");
+}
+
+function advanceRequestGeneration(source, requestId) {
+  var base = requestBaseKey(source, requestId);
+  requestGenerations.set(base, (requestGenerations.get(base) || 0) + 1);
+  return requestKey(source, requestId);
+}
+
+async function waitForPendingDebuggerEvents() {
+  var deadline = Date.now() + 15000;
+  while (pendingDebuggerEvents.size && Date.now() < deadline) {
+    await Promise.all(Array.from(pendingDebuggerEvents).map(function (promise) { return promise.catch(function () {}); }));
+  }
+  if (pendingDebuggerEvents.size) {
+    markCompletenessIssue("debugger-event-drain-timeout", { pending: pendingDebuggerEvents.size });
+    await addRecord("eventDrainTimeout", { pending: pendingDebuggerEvents.size });
+  }
 }
 
 function correlationForNow() {
@@ -343,6 +328,13 @@ function capturedSessionHasTarget(targetId) {
 function rememberAllowedOrigin(url) {
   var origin = WebCaptrueTargets.originForUrl(url);
   if (origin && origin !== "null") allowedTargetOrigins.add(origin);
+}
+
+function rememberAllowedTargetUrl(url) {
+  try {
+    var normalized = new URL(String(url || ""), state.url || undefined).href;
+    if (/^(https?|blob):/i.test(normalized)) allowedTargetUrls.add(normalized);
+  } catch (_) {}
 }
 
 function targetRelatedToRoot(info) {
@@ -423,7 +415,8 @@ async function attachExistingFlatTarget(rawInfo) {
   if (!WebCaptrueTargets.isFallbackCandidate(info, {
     rootTargetId: rootTargetId,
     rootTabId: state.tabId,
-    allowedOrigins: Array.from(allowedTargetOrigins)
+    allowedOrigins: Array.from(allowedTargetOrigins),
+    allowedUrls: Array.from(allowedTargetUrls)
   })) return;
   state.completeness.targetCandidates += 1;
   try {
@@ -452,7 +445,8 @@ async function pollLegacyTargets() {
         if (!WebCaptrueTargets.isFallbackCandidate(protocolInfo, {
           rootTargetId: rootTargetId,
           rootTabId: state.tabId,
-          allowedOrigins: Array.from(allowedTargetOrigins)
+          allowedOrigins: Array.from(allowedTargetOrigins),
+          allowedUrls: Array.from(allowedTargetUrls)
         })) continue;
         if (!legacySeenTargetIds.has(protocolInfo.targetId)) {
           legacySeenTargetIds.add(protocolInfo.targetId);
@@ -467,7 +461,8 @@ async function pollLegacyTargets() {
         if (!WebCaptrueTargets.isFallbackCandidate(globalInfo, {
           rootTargetId: rootTargetId,
           rootTabId: state.tabId,
-          allowedOrigins: Array.from(allowedTargetOrigins)
+          allowedOrigins: Array.from(allowedTargetOrigins),
+          allowedUrls: Array.from(allowedTargetUrls)
         })) continue;
         if (!legacySeenTargetIds.has(globalInfo.targetId)) {
           legacySeenTargetIds.add(globalInfo.targetId);
@@ -486,7 +481,8 @@ async function pollLegacyTargets() {
       if (!WebCaptrueTargets.isFallbackCandidate(info, {
         rootTargetId: rootTargetId,
         rootTabId: state.tabId,
-        allowedOrigins: Array.from(allowedTargetOrigins)
+        allowedOrigins: Array.from(allowedTargetOrigins),
+        allowedUrls: Array.from(allowedTargetUrls)
       })) continue;
       if (!legacySeenTargetIds.has(info.targetId)) {
         legacySeenTargetIds.add(info.targetId);
@@ -505,7 +501,13 @@ async function pollLegacyTargets() {
 }
 
 async function discoverRelatedTargets() {
-  var extensionTargets = await debuggerGetTargets();
+  var extensionTargets = [];
+  try {
+    extensionTargets = await debuggerGetTargets();
+  } catch (error) {
+    markCompletenessIssue("target-list-failed", { phase: "initial", reason: error.message || String(error) });
+    await addRecord("targetDiscoveryFailed", { phase: "initial", reason: error.message || String(error) });
+  }
   for (var i = 0; i < extensionTargets.length; i += 1) {
     if (extensionTargets[i].tabId === state.tabId && extensionTargets[i].type === "page") {
       rootTargetId = extensionTargets[i].id;
@@ -516,13 +518,22 @@ async function discoverRelatedTargets() {
   var frameTree = await tryCommand(root, "Page.getFrameTree");
   rootFrameIds.clear();
   allowedTargetOrigins.clear();
+  allowedTargetUrls.clear();
   rememberAllowedOrigin(state.url);
   (function collectFrames(node) {
     if (!node || !node.frame) return;
     if (node.frame.id) rootFrameIds.add(node.frame.id);
     rememberAllowedOrigin(node.frame.url);
+    rememberAllowedTargetUrl(node.frame.url);
+    (node.resources || []).forEach(function (resource) { rememberAllowedTargetUrl(resource.url); });
     (node.childFrames || []).forEach(collectFrames);
   }(frameTree && frameTree.frameTree));
+  var observedTargets = await tryCommand(root, "Runtime.evaluate", {
+    expression: "Promise.all([Promise.resolve(performance.getEntriesByType('resource').map(function(e){return e.name;})), navigator.serviceWorker && navigator.serviceWorker.getRegistrations ? navigator.serviceWorker.getRegistrations().then(function(rs){return rs.map(function(r){return r.active&&r.active.scriptURL||r.waiting&&r.waiting.scriptURL||r.installing&&r.installing.scriptURL||'';});}) : Promise.resolve([])]).then(function(x){return x[0].concat(x[1]);})",
+    returnByValue: true,
+    awaitPromise: true
+  });
+  (((observedTargets || {}).result || {}).value || []).forEach(rememberAllowedTargetUrl);
   await tryCommand(root, "Target.setDiscoverTargets", { discover: true });
   var result = await tryCommand(root, "Target.getTargets");
   var infos = result && result.targetInfos || [];

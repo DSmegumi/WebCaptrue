@@ -80,22 +80,17 @@
     } catch (_) {}
   }
 
-  function isSensitiveKey(name) {
-    return /(?:pass(?:word)?|passwd|pwd|token|access[_-]?token|refresh[_-]?token|secret|session[_-]?id|authorization|cookie|api[_-]?key)/i.test(String(name || ""));
-  }
-
   function headersToObject(headers) {
     var out = {};
     try {
       headers.forEach(function (value, name) {
-        out[name] = /^(authorization|proxy-authorization|cookie|set-cookie)$/i.test(name) ? "[REDACTED]" : value;
+        out[name] = value;
       });
     } catch (_) {}
     return out;
   }
 
   function jsonSafe(value, depth, seen, keyName) {
-    if (isSensitiveKey(keyName)) return "[REDACTED]";
     if (value === null || value === undefined) return value === undefined ? null : value;
     if (depth > 7) return "[MAX_DEPTH]";
     var type = typeof value;
@@ -112,13 +107,17 @@
     if (seen.has(value)) return "[CIRCULAR]";
     seen.add(value);
     if (Array.isArray(value)) {
-      return value.slice(0, 500).map(function (item) { return jsonSafe(item, depth + 1, seen, ""); });
+      var arrayOut = value.slice(0, 500).map(function (item) { return jsonSafe(item, depth + 1, seen, ""); });
+      if (value.length > 500) arrayOut.push({ _webcaptrueTruncatedItems: value.length - 500 });
+      return arrayOut;
     }
     var out = {};
     try {
-      Object.keys(value).slice(0, 500).forEach(function (key) {
+      var keys = Object.keys(value);
+      keys.slice(0, 500).forEach(function (key) {
         out[key] = jsonSafe(value[key], depth + 1, seen, key);
       });
+      if (keys.length > 500) out._webcaptrueTruncatedKeys = keys.length - 500;
     } catch (_) {
       return String(value);
     }
@@ -135,8 +134,8 @@
       for (var i = 0; i < storage.length; i += 1) {
         var key = storage.key(i);
         var value = storage.getItem(key);
-        var sanitized = WebCaptrueSanitize.storageValue(key, value);
-        out[key] = sanitized.length > 12000 ? sanitized.slice(0, 12000) + "...[TRUNCATED]" : sanitized;
+        var text = String(value === null || value === undefined ? "" : value);
+        out[key] = text.length > 12000 ? text.slice(0, 12000) + "...[TRUNCATED " + (text.length - 12000) + " CHARS]" : text;
       }
     } catch (error) {
       out._error = error.message || String(error);
@@ -232,14 +231,8 @@
     return value.indexOf("text/") === 0 || /(?:json|javascript|xml|graphql|x-www-form-urlencoded)/.test(value);
   }
 
-  function sanitizeTextPayload(text, mime) {
-    if (!text) return text;
-    if (String(mime || "").toLowerCase().indexOf("json") >= 0 || /^[\s]*[\[{]/.test(text)) {
-      try { return JSON.stringify(safeValue(JSON.parse(text))); } catch (_) {}
-    }
-    return String(text)
-      .replace(/((?:password|passwd|pwd|access[_-]?token|refresh[_-]?token|api[_-]?key|secret)\s*[=:]\s*)[^&\s,;]+/ig, "$1[REDACTED]")
-      .replace(/("(?:password|passwd|pwd|access[_-]?token|refresh[_-]?token|api[_-]?key|secret)"\s*:\s*")[^"]*(")/ig, "$1[REDACTED]$2");
+  function readTextPayload(text) {
+    return String(text || "");
   }
 
   async function dumpCacheStorage() {
@@ -267,7 +260,7 @@
             if (textLikeMime(mime) && (!declared || declared <= MAX_CACHE_TEXT_BYTES)) {
               try {
                 var text = await response.clone().text();
-                if (text.length <= MAX_CACHE_TEXT_BYTES) entry.response.body = sanitizeTextPayload(text, mime);
+                if (text.length <= MAX_CACHE_TEXT_BYTES) entry.response.body = readTextPayload(text);
                 else entry.response.bodySkipped = "text exceeds 1 MB";
               } catch (error) {
                 entry.response.bodySkipped = error.message || String(error);

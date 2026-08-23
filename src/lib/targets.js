@@ -51,7 +51,9 @@
     if (!isCapturableType(info.type)) return false;
     if (typeof info.tabId === "number" && typeof scope.rootTabId === "number" && info.tabId === scope.rootTabId) return true;
     var origin = originForUrl(info.url);
-    return !!origin && (scope.allowedOrigins || []).indexOf(origin) >= 0;
+    if (!origin || (scope.allowedOrigins || []).indexOf(origin) < 0) return false;
+    if (info.type === "shared_worker" || info.type === "service_worker") return true;
+    return (scope.allowedUrls || []).indexOf(info.url) >= 0;
   }
 
   global.WebCaptrueTargets = {

@@ -23,7 +23,7 @@ if (view.getUint32(bytes.length - 22, true) !== 0x06054b50) throw new Error("ZIP
 const background = ["src/background.js", "src/background/00-core.js", "src/background/10-capture.js", "src/background/20-events.js"].map(f => fs.readFileSync(path.join(root, f), "utf8")).join("\n");
 const content = fs.readFileSync(path.join(root, "src/content.js"), "utf8");
 const offscreen = ["src/offscreen.js", "src/offscreen/00-analysis.js", "src/offscreen/10-export.js"].map(f => fs.readFileSync(path.join(root, f), "utf8")).join("\n");
-for (const marker of ["Target.setDiscoverTargets", "targetId", "captureFullPageScreenshot", "interactionId", "requestKey"]) {
+for (const marker of ["Target.setDiscoverTargets", "targetId", "captureFullPageScreenshot", "interactionId", "requestKey", "params.redirectResponse", "waitForPendingDebuggerEvents"]) {
   if (!background.includes(marker)) throw new Error(`background capture marker missing: ${marker}`);
 }
 for (const marker of ["indexedDB.databases", "dumpCacheStorage", "REQUEST_CLIENT_STORAGE"]) {

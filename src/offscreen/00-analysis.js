@@ -324,14 +324,15 @@ function buildCompleteness(meta, records) {
     (byType[type] || []).forEach(function (record) { failureRecords.push({ type: type, capturedAt: record.capturedAt, data: record.data }); });
   });
   var truncationRecords = [];
-  ["responseBodySkipped", "preloadedResourceSkipped", "scriptSourceSkipped", "fullPageScreenshotFallback"].forEach(function (type) {
+  ["responseBodySkipped", "preloadedResourceSkipped", "scriptSourceSkipped", "fullPageScreenshotFallback", "clientStorageTruncation"].forEach(function (type) {
     (byType[type] || []).forEach(function (record) { truncationRecords.push({ type: type, capturedAt: record.capturedAt, data: record.data }); });
   });
   var exclusionRecords = [];
   ["responseBodyExcluded", "scriptSourceExcluded"].forEach(function (type) {
     (byType[type] || []).forEach(function (record) { exclusionRecords.push({ type: type, capturedAt: record.capturedAt, data: record.data }); });
   });
-  var knownGapCount = requestsWithoutTerminalEvent.length + responsesWithoutBodyOrReason.length + failureRecords.length + truncationRecords.length + (completenessState.recordWriteFailures || 0);
+  var runtimeIssues = completenessState.issues || [];
+  var knownGapCount = requestsWithoutTerminalEvent.length + responsesWithoutBodyOrReason.length + failureRecords.length + truncationRecords.length + runtimeIssues.length + (completenessState.recordWriteFailures || 0);
   return {
     format: "webcaptrue-completeness",
     version: 1,
@@ -357,7 +358,8 @@ function buildCompleteness(meta, records) {
     },
     storage: {
       snapshots: (byType.clientStorageSnapshot || []).length,
-      skippedFrames: (byType.clientStorageSnapshotSkipped || []).length
+      skippedFrames: (byType.clientStorageSnapshotSkipped || []).length,
+      truncationReports: (byType.clientStorageTruncation || []).length
     },
     pageState: {
       htmlSnapshots: (byType.domSnapshot || []).length,
@@ -371,7 +373,7 @@ function buildCompleteness(meta, records) {
     failures: failureRecords,
     truncations: truncationRecords,
     exclusions: exclusionRecords,
-    runtimeIssues: completenessState.issues || []
+    runtimeIssues: runtimeIssues
   };
 }
 

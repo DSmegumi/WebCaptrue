@@ -19,12 +19,14 @@ assert.equal(targets.supportsFlatSessions("Mozilla/5.0 Chrome/109.0.0.0 Safari/5
 const scope = {
   rootTargetId: "root",
   rootTabId: 7,
-  allowedOrigins: ["https://app.example.test"]
+  allowedOrigins: ["https://app.example.test"],
+  allowedUrls: ["https://app.example.test/worker.js", "blob:https://app.example.test/abc"]
 };
 assert.equal(targets.isFallbackCandidate({ id: "worker-1", type: "worker", url: "https://app.example.test/worker.js" }, scope), true);
 assert.equal(targets.isFallbackCandidate({ id: "sw-1", type: "service_worker", url: "https://app.example.test/sw.js" }, scope), true);
 assert.equal(targets.isFallbackCandidate({ id: "blob-1", type: "worker", url: "blob:https://app.example.test/abc" }, scope), true);
 assert.equal(targets.isFallbackCandidate({ id: "other", type: "worker", url: "https://other.example.test/worker.js" }, scope), false);
+assert.equal(targets.isFallbackCandidate({ id: "same-origin-other-tab", type: "worker", url: "https://app.example.test/other-worker.js" }, scope), false);
 assert.equal(targets.isFallbackCandidate({ id: "root", type: "page", tabId: 7, url: "https://app.example.test/" }, scope), false);
 assert.equal(targets.isBrowserExtensionUrl("chrome-extension://abc/content.js"), true);
 assert.equal(targets.isBrowserExtensionUrl("https://app.example.test/app.js"), false);
@@ -59,6 +61,15 @@ const sanitizedRecords = sanitize.exportRecords([
 ]);
 assert.equal(sanitizedRecords.records[1].data.source, 'const injected = { text: "[REDACTED]", apiKey: "[REDACTED]" };');
 assert.equal(sanitizedRecords.records[2].data.body, 'const config = { authorization: "[REDACTED]" };');
+const networkExport = sanitize.exportRecords([
+  { type: "request", data: { headers: { authorization: "Bearer raw", "content-type": "application/json" }, postData: '{"password":"raw","rows":[1]}' } },
+  { type: "responseBody", data: { mimeType: "application/json", base64Encoded: false, body: '{"token":"raw","rows":[1]}' } },
+  { type: "clientStorageSnapshot", data: { snapshot: { localStorage: { fixture: '{"apiKey":"raw","rows":[1]}' } } } }
+]);
+assert.equal(networkExport.records[0].data.headers.authorization, "[REDACTED]");
+assert.equal(networkExport.records[0].data.postData, '{"password":"[REDACTED]","rows":[1]}');
+assert.equal(networkExport.records[1].data.body, '{"token":"[REDACTED]","rows":[1]}');
+assert.equal(networkExport.records[2].data.snapshot.localStorage.fixture, '{"apiKey":"[REDACTED]","rows":[1]}');
 
 context.WebCaptrueDB = function () {};
 context.setInterval = function () { return 0; };
@@ -88,5 +99,12 @@ const streamingCompleteness = context.buildCompleteness({
 assert.equal(streamingCompleteness.verdict, "no-known-gaps");
 assert.deepEqual(Array.from(streamingCompleteness.network.responsesWithoutBodyOrReason), []);
 assert.equal(streamingCompleteness.exclusions.length, 1);
+
+const issueCompleteness = context.buildCompleteness({
+  options: { captureBodies: true },
+  completeness: { recordWriteFailures: 0, issues: [{ code: "target-poll-failed" }] }
+}, [{ type: "clientStorageTruncation", data: { issueCount: 1 } }]);
+assert.equal(issueCompleteness.verdict, "known-gaps");
+assert.equal(issueCompleteness.storage.truncationReports, 1);
 
 console.log("WebCaptrue integrity checks passed: Chrome 109 fallback and scoped child Target selection OK.");

@@ -75,7 +75,7 @@ WebCaptrue 只采集浏览器本身能够观察或通过浏览器授权调试接
 - password 输入值永不记录。
 - 常见 `password/token/secret/session/apiKey` 字段递归脱敏。
 - 页面输入默认只记录字段、选择器和长度，不记录原始输入值。
-- IndexedDB、Cache Storage、Request/Response JSON 中继续执行常见凭证字段脱敏。
+- IndexedDB、Cache Storage、Request/Response JSON 先完整写入本地会话，再在导出副本中执行常见凭证字段脱敏。
 - 不使用遥测、统计 SDK 或远程执行代码。
 - 采集和 ZIP 生成可以完全离线执行。
 

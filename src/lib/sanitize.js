@@ -20,6 +20,9 @@
       Object.keys(value).forEach(function (key) { out[key] = structuredValue(value[key], key, audit, (path || "$") + "." + key); });
       return out;
     }
+    if (typeof value === "string" && /^[\s]*[\[{]/.test(value)) {
+      try { return JSON.stringify(structuredValue(JSON.parse(value), "", audit, path)); } catch (_) {}
+    }
     return value;
   }
 
@@ -43,6 +46,46 @@
     var text = String(value || "");
     if (!/^[\s]*[\[{]/.test(text)) return text;
     try { return JSON.stringify(structuredValue(JSON.parse(text), "", audit, path)); } catch (_) { return text; }
+  }
+
+  function headers(value, audit, path) {
+    var out = {};
+    Object.keys(value || {}).forEach(function (name) {
+      if (/^(authorization|proxy-authorization|cookie|set-cookie)$/i.test(name)) {
+        out[name] = "[REDACTED]";
+        note(audit, "sensitive-header", (path || "$") + "." + name);
+      } else {
+        out[name] = value[name];
+      }
+    });
+    return out;
+  }
+
+  function payloadText(value, contentType, audit, path) {
+    var text = String(value || "");
+    var mime = String(contentType || "").toLowerCase();
+    if (mime.indexOf("json") >= 0 || /^[\s]*[\[{]/.test(text)) return sanitizeJsonString(text, audit, path);
+    if (mime.indexOf("application/x-www-form-urlencoded") >= 0) {
+      try {
+        var params = new URLSearchParams(text);
+        Array.from(params.keys()).forEach(function (key) {
+          if (!isSensitiveKey(key)) return;
+          params.set(key, "[REDACTED]");
+          note(audit, "sensitive-form-field", (path || "$") + "." + key);
+        });
+        return params.toString();
+      } catch (_) {}
+    }
+    return sourceText(text, audit, path);
+  }
+
+  function redactCookieRecords(data, audit, path) {
+    (data.associatedCookies || []).forEach(function (item, index) {
+      if (item.cookie && Object.prototype.hasOwnProperty.call(item.cookie, "value")) {
+        item.cookie.value = "[REDACTED]";
+        note(audit, "cookie-value", (path || "$") + ".associatedCookies[" + index + "].cookie.value");
+      }
+    });
   }
 
   function replaceSensitiveValues(value, sensitiveValues, audit, path) {
@@ -153,8 +196,17 @@
     });
     var output = (records || []).map(function (record, index) {
       var copy = runtimeValue(record, audit, "$[" + index + "]", sensitiveValues);
+      var dataPath = "$[" + index + "].data";
+      if (copy.type === "request" && copy.data) {
+        copy.data.headers = headers(copy.data.headers, audit, dataPath + ".headers");
+        if (copy.data.postData) copy.data.postData = payloadText(copy.data.postData, copy.data.headers && (copy.data.headers["Content-Type"] || copy.data.headers["content-type"]), audit, dataPath + ".postData");
+      }
+      if ((copy.type === "response" || copy.type === "requestExtraInfo" || copy.type === "responseExtraInfo") && copy.data) copy.data.headers = headers(copy.data.headers, audit, dataPath + ".headers");
+      if (copy.type === "requestExtraInfo" && copy.data) redactCookieRecords(copy.data, audit, dataPath);
+      if (copy.type === "responseBody" && copy.data && !copy.data.base64Encoded) copy.data.body = payloadText(copy.data.body, copy.data.mimeType, audit, dataPath + ".body");
+      if (copy.type === "clientStorageSnapshot" && copy.data && copy.data.snapshot) copy.data.snapshot = structuredValue(copy.data.snapshot, "", audit, dataPath + ".snapshot");
       if (copy.type === "scriptSource" && copy.data) copy.data.source = sourceText(copy.data.source, audit, "$[" + index + "].data.source");
-      if (copy.type === "preloadedResource" && copy.data && (copy.data.resourceType === "Script" || /javascript/i.test(copy.data.mimeType || ""))) copy.data.body = sourceText(copy.data.body, audit, "$[" + index + "].data.body");
+      if (copy.type === "preloadedResource" && copy.data && !copy.data.base64Encoded) copy.data.body = payloadText(copy.data.body, copy.data.mimeType, audit, "$[" + index + "].data.body");
       if (copy.type === "domSnapshot" && copy.data) copy.data.html = html(copy.data.html, audit, "$[" + index + "].data.html");
       if (copy.type === "domStructuredSnapshot" && copy.data) copy.data.snapshot = domSnapshot(copy.data.snapshot, audit, "$[" + index + "].data.snapshot");
       return copy;
@@ -166,6 +218,8 @@
     isSensitiveKey: isSensitiveKey,
     structuredValue: structuredValue,
     storageValue: storageValue,
+    headers: headers,
+    payloadText: payloadText,
     sourceText: sourceText,
     domSnapshot: domSnapshot,
     passwordValuesFromSnapshot: passwordValuesFromSnapshot,

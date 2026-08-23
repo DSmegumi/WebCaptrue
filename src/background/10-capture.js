@@ -40,11 +40,46 @@ async function captureClientStorage(label) {
         frameUrl: frames[i].url || response.snapshot.frameUrl || "",
         snapshot: response.snapshot
       });
+      var storageIssues = collectStorageIssues(response.snapshot);
+      if (storageIssues.length) {
+        await addRecord("clientStorageTruncation", {
+          label: label,
+          frameId: frames[i].frameId,
+          frameUrl: frames[i].url || response.snapshot.frameUrl || "",
+          issues: storageIssues,
+          issueCount: storageIssues.length
+        });
+      }
     } else {
       await addRecord("clientStorageSnapshotSkipped", { label: label, frameId: frames[i].frameId, frameUrl: frames[i].url || "", reason: response && response.error || "content script unavailable" });
     }
   }
   schedulePersist();
+}
+
+function collectStorageIssues(snapshot) {
+  var issues = [];
+  function visit(value, path, depth) {
+    if (issues.length >= 500 || depth > 20 || value === null || value === undefined) return;
+    if (typeof value === "string") {
+      if (/\[(?:TRUNCATED|MAX_DEPTH)/.test(value)) issues.push({ path: path, reason: "value truncated" });
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(function (item, index) { visit(item, path + "[" + index + "]", depth + 1); });
+      return;
+    }
+    if (typeof value !== "object") return;
+    Object.keys(value).forEach(function (key) {
+      var childPath = path + "." + key;
+      if ((key === "truncated" && value[key] === true) || key === "bodySkipped" || key === "error" || key === "_error" || /^_webcaptrueTruncated/.test(key)) {
+        if (value[key]) issues.push({ path: childPath, reason: String(value[key]) });
+      }
+      visit(value[key], childPath, depth + 1);
+    });
+  }
+  visit(snapshot, "$", 0);
+  return issues;
 }
 
 async function captureVisibleScreenshot(label, force) {
@@ -165,11 +200,13 @@ async function startCapture(tabId, options) {
     captureClientStorage: !options || options.captureClientStorage !== false
   };
   requestMap.clear();
+  requestGenerations.clear();
   capturedTargets.clear();
   capturedSessions.clear();
   targetInfoMap.clear();
   rootFrameIds.clear();
   allowedTargetOrigins.clear();
+  allowedTargetUrls.clear();
   expectedDetachKeys.clear();
   legacySeenTargetIds.clear();
   rootTargetId = null;
@@ -215,13 +252,14 @@ async function stopCapture() {
   await capturePageState("final");
   await captureClientStorage("final");
   await captureFullPageScreenshot("final");
-  await addRecord("sessionStop", { stoppedAt: new Date().toISOString(), counters: state.counters });
   await detachChildTargets();
   await tryCommand(debuggee, "Target.setAutoAttach", { autoAttach: false, waitForDebuggerOnStart: false, flatten: flatSessionsSupported });
   await tryCommand(debuggee, "Target.setDiscoverTargets", { discover: false });
   expectedDetachKeys.add(sourceKey(debuggee));
   await debuggerDetach(debuggee);
   expectedDetachKeys.delete(sourceKey(debuggee));
+  await waitForPendingDebuggerEvents();
+  await addRecord("sessionStop", { stoppedAt: new Date().toISOString(), counters: state.counters });
 
   state.active = false;
   schedulePersist();
