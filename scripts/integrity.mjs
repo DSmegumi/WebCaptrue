@@ -28,6 +28,7 @@ assert.equal(targets.isFallbackCandidate({ id: "blob-1", type: "worker", url: "b
 assert.equal(targets.isFallbackCandidate({ id: "other", type: "worker", url: "https://other.example.test/worker.js" }, scope), false);
 assert.equal(targets.isFallbackCandidate({ id: "same-origin-other-tab", type: "worker", url: "https://app.example.test/other-worker.js" }, scope), false);
 assert.equal(targets.isFallbackCandidate({ id: "same-url-other-tab", type: "worker", tabId: 8, url: "https://app.example.test/worker.js" }, scope), false);
+assert.equal(targets.isFallbackCandidate({ id: "no-tab-ambiguous", type: "worker", url: "https://app.example.test/worker.js" }, { ...scope, ambiguousOrigins: ["https://app.example.test"] }), false);
 assert.equal(targets.isFallbackCandidate({ id: "root", type: "page", tabId: 7, url: "https://app.example.test/" }, scope), false);
 assert.equal(targets.isBrowserExtensionUrl("chrome-extension://abc/content.js"), true);
 assert.equal(targets.isBrowserExtensionUrl("https://app.example.test/app.js"), false);
@@ -75,6 +76,12 @@ const base64Export = sanitize.exportRecords([
   { type: "responseBody", data: { mimeType: "application/json", base64Encoded: true, body: btoa('{"password":"raw","rows":[1]}') } }
 ]);
 assert.equal(atob(base64Export.records[0].data.body), '{"password":"[REDACTED]","rows":[1]}');
+const nonUtf8Body = btoa(String.fromCharCode(0x81, 0x40, 0xff));
+const nonUtf8Export = sanitize.exportRecords([
+  { type: "responseBody", data: { mimeType: "text/html; charset=gbk", base64Encoded: true, body: nonUtf8Body } }
+]);
+assert.equal(nonUtf8Export.records[0].data.body, nonUtf8Body);
+assert.ok(nonUtf8Export.redactions.some(item => item.category === "base64-text-redaction-skipped-non-utf8"));
 
 context.WebCaptrueDB = function () {};
 context.setInterval = function () { return 0; };

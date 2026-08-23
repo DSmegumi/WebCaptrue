@@ -18,14 +18,14 @@ The extension now completes real start/stop/export flows in macOS Chrome 151. A 
 - Added a global, same-origin Target sweep so a Shared Worker that existed before capture is still attached; real export evidence includes its request, response, and response body.
 - Added explicit completeness output: `integrity/completeness.json`, failures, truncations, exclusions, and export-stage redaction audit.
 - Preserved redirect chains with generation-qualified request keys so reused CDP request IDs no longer overwrite earlier hops.
-- Serialized debugger events per source and independently sequenced redirect ExtraInfo records, preventing asynchronous IndexedDB writes from crossing redirect hops.
+- Serialized debugger events per source and defers ExtraInfo association until all redirect hops are known; ambiguous/missing ExtraInfo is retained with candidates and an explicit completeness issue instead of being mislinked.
 - Added stop-time debugger quiet, event, and database-write drains before the final session marker and export; child Target mappings remain valid through the tail-event window.
 - Changed network and client-storage capture to retain the browser-exposed raw structure in the local session; credential redaction now happens on the export copy.
 - Added explicit client-storage truncation/error records and included runtime issues in the `known-gaps` verdict.
 - Narrowed fallback attachment for workers, Shared Workers, Service Workers, and iframes to URLs actually observed from the captured page.
 - Refreshes observed resource and Service Worker script URLs during capture; explicitly rejects Targets carrying another tab ID even when URL matches.
 - Captures each input event immediately (without recording field values), avoiding loss of the last input during stop.
-- Redacts text MIME bodies even when CDP supplied them as base64, then re-encodes them without changing the archive representation.
+- Redacts UTF-8 text MIME bodies even when CDP supplied them as base64; non-UTF-8 bytes remain bit-for-bit unchanged with an explicit redaction-skip audit.
 - Added idempotent content-script injection so capture can start on an already-open page.
 - Added click-operable popup flow plus `Ctrl+Shift+Y` command/page bridge.
 - Preserved JSON-string storage structure while redacting sensitive field values only in the exported copy.

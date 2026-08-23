@@ -87,7 +87,7 @@
     var binary = atob(String(value || ""));
     var bytes = new Uint8Array(binary.length);
     for (var i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   }
 
   function encodeBase64Text(value) {
@@ -102,9 +102,9 @@
     try {
       var decoded = decodeBase64Text(data.body);
       var sanitized = payloadText(decoded, data.mimeType, audit, path);
-      data.body = encodeBase64Text(sanitized);
+      if (sanitized !== decoded) data.body = encodeBase64Text(sanitized);
     } catch (_) {
-      note(audit, "base64-text-redaction-failed", path);
+      note(audit, "base64-text-redaction-skipped-non-utf8", path);
     }
   }
 

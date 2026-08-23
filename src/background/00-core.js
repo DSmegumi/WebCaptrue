@@ -9,14 +9,19 @@ var SETTINGS_KEY = "webcatrueSettings";
 var db = new WebCaptrueDB();
 var requestMap = new Map();
 var requestGenerations = new Map();
-var requestExtraGenerations = new Map();
-var responseExtraGenerations = new Map();
+var requestHopKeys = new Map();
+var requestExtraBuffers = new Map();
+var responseExtraExpectedKeys = new Map();
+var responseExtraBuffers = new Map();
+var extraInfoAssociationIssues = new Set();
 var capturedTargets = new Map();
 var capturedSessions = new Map();
 var targetInfoMap = new Map();
 var rootFrameIds = new Set();
 var allowedTargetOrigins = new Set();
 var allowedTargetUrls = new Set();
+var ambiguousTargetOrigins = new Set();
+var reportedAmbiguousTargetOrigins = new Set();
 var expectedDetachKeys = new Set();
 var rootTargetId = null;
 var flatSessionsSupported = false;
@@ -273,17 +278,70 @@ function requestKey(source, requestId) {
   return base + (generation ? "#redirect-" + generation : "");
 }
 
-function sequentialRequestKey(source, requestId, counters) {
-  var base = requestBaseKey(source, requestId);
-  var generation = counters.get(base) || 0;
-  counters.set(base, generation + 1);
-  return base + (generation ? "#redirect-" + generation : "");
-}
-
 function advanceRequestGeneration(source, requestId) {
   var base = requestBaseKey(source, requestId);
   requestGenerations.set(base, (requestGenerations.get(base) || 0) + 1);
   return requestKey(source, requestId);
+}
+
+function appendMapValue(map, key, value) {
+  var values = map.get(key) || [];
+  values.push(value);
+  map.set(key, values);
+}
+
+function rememberRequestHop(source, requestId, key) {
+  appendMapValue(requestHopKeys, requestBaseKey(source, requestId), key);
+}
+
+function expectResponseExtraInfo(source, requestId, key) {
+  appendMapValue(responseExtraExpectedKeys, requestBaseKey(source, requestId), key);
+}
+
+function bufferExtraInfo(map, source, requestId, data) {
+  appendMapValue(map, requestBaseKey(source, requestId), data);
+}
+
+async function flushAllExtraInfo() {
+  var bases = new Set();
+  requestExtraBuffers.forEach(function (_, key) { bases.add(key); });
+  responseExtraBuffers.forEach(function (_, key) { bases.add(key); });
+  responseExtraExpectedKeys.forEach(function (_, key) { bases.add(key); });
+  for (var base of bases) {
+    var requestExtras = requestExtraBuffers.get(base) || [];
+    var requestKeys = requestHopKeys.get(base) || [];
+    var responseExtras = responseExtraBuffers.get(base) || [];
+    var responseKeys = responseExtraExpectedKeys.get(base) || [];
+    var requestExact = requestExtras.length === 0 || requestExtras.length === requestKeys.length;
+    var responseExact = responseExtras.length === responseKeys.length;
+    for (var i = 0; i < requestExtras.length; i += 1) {
+      requestExtras[i].requestKey = requestExact ? requestKeys[i] : null;
+      requestExtras[i].association = requestExact ? "exact-by-complete-hop-sequence" : "ambiguous";
+      if (!requestExact) requestExtras[i].requestKeyCandidates = requestKeys.slice();
+      await addRecord("requestExtraInfo", requestExtras[i]);
+    }
+    for (var j = 0; j < responseExtras.length; j += 1) {
+      responseExtras[j].requestKey = responseExact ? responseKeys[j] : null;
+      responseExtras[j].association = responseExact ? "exact-by-cdp-extra-info-flags" : "ambiguous";
+      if (!responseExact) responseExtras[j].requestKeyCandidates = responseKeys.slice();
+      await addRecord("responseExtraInfo", responseExtras[j]);
+    }
+    if ((!requestExact || !responseExact) && !extraInfoAssociationIssues.has(base)) {
+      extraInfoAssociationIssues.add(base);
+      markCompletenessIssue("extra-info-association-ambiguous", {
+        requestBaseKey: base,
+        requestExtraCount: requestExtras.length,
+        requestHopCount: requestKeys.length,
+        responseExtraCount: responseExtras.length,
+        expectedResponseExtraCount: responseKeys.length
+      });
+      await addRecord("extraInfoAssociationGap", { requestBaseKey: base, requestKeys: requestKeys, responseKeys: responseKeys });
+    }
+  }
+  requestExtraBuffers.clear();
+  responseExtraBuffers.clear();
+  requestHopKeys.clear();
+  responseExtraExpectedKeys.clear();
 }
 
 async function waitForPendingDebuggerEvents() {
@@ -409,6 +467,23 @@ async function refreshAllowedTargetUrls(root, force) {
   (((observedTargets || {}).result || {}).value || []).forEach(rememberAllowedTargetUrl);
 }
 
+function updateAmbiguousTargetOrigins(targets) {
+  ambiguousTargetOrigins.clear();
+  (targets || []).forEach(function (rawInfo) {
+    var info = WebCaptrueTargets.normalize(rawInfo);
+    if (info.type !== "page" || typeof info.tabId !== "number" || info.tabId === state.tabId) return;
+    var origin = WebCaptrueTargets.originForUrl(info.url);
+    if (origin && allowedTargetOrigins.has(origin)) {
+      ambiguousTargetOrigins.add(origin);
+      if (!reportedAmbiguousTargetOrigins.has(origin)) {
+        reportedAmbiguousTargetOrigins.add(origin);
+        markCompletenessIssue("target-attribution-ambiguous", { origin: origin, otherTabId: info.tabId });
+        addRecord("targetAttributionGap", { origin: origin, otherTabId: info.tabId, reason: "same-origin page open in another tab; no-tabId fallback targets are excluded" });
+      }
+    }
+  });
+}
+
 function targetRelatedToRoot(info) {
   if (!info || !rootTargetId || info.targetId === rootTargetId) return false;
   if (info.parentFrameId && rootFrameIds.has(info.parentFrameId)) return true;
@@ -488,7 +563,8 @@ async function attachExistingFlatTarget(rawInfo) {
     rootTargetId: rootTargetId,
     rootTabId: state.tabId,
     allowedOrigins: Array.from(allowedTargetOrigins),
-    allowedUrls: Array.from(allowedTargetUrls)
+    allowedUrls: Array.from(allowedTargetUrls),
+    ambiguousOrigins: Array.from(ambiguousTargetOrigins)
   })) return;
   state.completeness.targetCandidates += 1;
   try {
@@ -508,9 +584,11 @@ async function pollLegacyTargets() {
   try {
     state.completeness.targetScans += 1;
     await refreshAllowedTargetUrls({ tabId: state.tabId }, false);
+    var globalSnapshot = await debuggerGetTargets();
+    updateAmbiguousTargetOrigins(globalSnapshot);
     var newlySeen = [];
     if (flatSessionsSupported) {
-      var protocolResult = await tryCommand({ tabId: state.tabId }, "Target.getTargets");
+      var protocolResult = await discoveryCommand({ tabId: state.tabId }, "Target.getTargets");
       var protocolTargets = protocolResult && protocolResult.targetInfos || [];
       for (var p = 0; p < protocolTargets.length; p += 1) {
         var protocolInfo = WebCaptrueTargets.normalize(protocolTargets[p]);
@@ -519,7 +597,8 @@ async function pollLegacyTargets() {
           rootTargetId: rootTargetId,
           rootTabId: state.tabId,
           allowedOrigins: Array.from(allowedTargetOrigins),
-          allowedUrls: Array.from(allowedTargetUrls)
+          allowedUrls: Array.from(allowedTargetUrls),
+          ambiguousOrigins: Array.from(ambiguousTargetOrigins)
         })) continue;
         if (!legacySeenTargetIds.has(protocolInfo.targetId)) {
           legacySeenTargetIds.add(protocolInfo.targetId);
@@ -527,7 +606,7 @@ async function pollLegacyTargets() {
         }
         await attachExistingFlatTarget(protocolInfo);
       }
-      var globalTargets = await debuggerGetTargets();
+      var globalTargets = globalSnapshot;
       for (var g = 0; g < globalTargets.length; g += 1) {
         var globalInfo = WebCaptrueTargets.normalize(globalTargets[g]);
         targetInfoMap.set(globalInfo.targetId, globalInfo);
@@ -535,7 +614,8 @@ async function pollLegacyTargets() {
           rootTargetId: rootTargetId,
           rootTabId: state.tabId,
           allowedOrigins: Array.from(allowedTargetOrigins),
-          allowedUrls: Array.from(allowedTargetUrls)
+          allowedUrls: Array.from(allowedTargetUrls),
+          ambiguousOrigins: Array.from(ambiguousTargetOrigins)
         })) continue;
         if (!legacySeenTargetIds.has(globalInfo.targetId)) {
           legacySeenTargetIds.add(globalInfo.targetId);
@@ -546,7 +626,7 @@ async function pollLegacyTargets() {
       if (newlySeen.length) await addRecord("targetDiscovery", { mode: "flat-session-sweep", discovered: newlySeen });
       return;
     }
-    var targets = await debuggerGetTargets();
+    var targets = globalSnapshot;
     for (var i = 0; i < targets.length; i += 1) {
       var info = WebCaptrueTargets.normalize(targets[i]);
       if (info.type === "page" && info.tabId === state.tabId) rootTargetId = info.targetId;
@@ -555,7 +635,8 @@ async function pollLegacyTargets() {
         rootTargetId: rootTargetId,
         rootTabId: state.tabId,
         allowedOrigins: Array.from(allowedTargetOrigins),
-        allowedUrls: Array.from(allowedTargetUrls)
+        allowedUrls: Array.from(allowedTargetUrls),
+        ambiguousOrigins: Array.from(ambiguousTargetOrigins)
       })) continue;
       if (!legacySeenTargetIds.has(info.targetId)) {
         legacySeenTargetIds.add(info.targetId);

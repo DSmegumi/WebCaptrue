@@ -201,8 +201,11 @@ async function startCapture(tabId, options) {
   };
   requestMap.clear();
   requestGenerations.clear();
-  requestExtraGenerations.clear();
-  responseExtraGenerations.clear();
+  requestHopKeys.clear();
+  requestExtraBuffers.clear();
+  responseExtraExpectedKeys.clear();
+  responseExtraBuffers.clear();
+  extraInfoAssociationIssues.clear();
   debuggerEventQueues.clear();
   pendingDebuggerEvents.clear();
   pendingRecordWrites.clear();
@@ -212,6 +215,8 @@ async function startCapture(tabId, options) {
   rootFrameIds.clear();
   allowedTargetOrigins.clear();
   allowedTargetUrls.clear();
+  ambiguousTargetOrigins.clear();
+  reportedAmbiguousTargetOrigins.clear();
   expectedDetachKeys.clear();
   legacySeenTargetIds.clear();
   rootTargetId = null;
@@ -268,8 +273,10 @@ async function stopCapture() {
   await discoveryCommand(debuggee, "Target.setDiscoverTargets", { discover: false });
   expectedDetachKeys.add(sourceKey(debuggee));
   await debuggerDetach(debuggee);
+  lastDebuggerEventAt = Date.now();
   await waitForDebuggerQuiet();
   await waitForPendingDebuggerEvents();
+  await flushAllExtraInfo();
   capturedTargets.clear();
   capturedSessions.clear();
   expectedDetachKeys.clear();

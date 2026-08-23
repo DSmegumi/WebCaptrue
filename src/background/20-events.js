@@ -70,6 +70,7 @@ async function handleDebuggerEvent(source, method, params) {
     var correlation = correlationForNow();
     if (params.redirectResponse) {
       var redirectKey = requestKey(source, params.requestId);
+      if (params.redirectHasExtraInfo) expectResponseExtraInfo(source, params.requestId, redirectKey);
       var redirectResponse = responseRecordFromPayload(params.requestId, redirectKey, params.type, params.timestamp, params.redirectResponse, target, true);
       var redirectedRequest = requestMap.get(redirectKey) || {};
       redirectedRequest.response = redirectResponse;
@@ -96,6 +97,7 @@ async function handleDebuggerEvent(source, method, params) {
       interaction: correlation
     };
     requestMap.set(rec.requestKey, rec);
+    rememberRequestHop(source, params.requestId, rec.requestKey);
     state.counters.requests += 1;
     if (isApiType(params.type)) state.counters.apis += 1;
     schedulePersist();
@@ -104,10 +106,10 @@ async function handleDebuggerEvent(source, method, params) {
   }
 
   if (method === "Network.requestWillBeSentExtraInfo") {
-    await addRecord("requestExtraInfo", {
+    bufferExtraInfo(requestExtraBuffers, source, params.requestId, {
       requestId: params.requestId,
-      requestKey: sequentialRequestKey(source, params.requestId, requestExtraGenerations),
       target: target,
+      eventReceivedAt: new Date().toISOString(),
       headers: Object.assign({}, params.headers || {}),
       associatedCookies: (params.associatedCookies || []).map(function (item) {
         return { blockedReasons: item.blockedReasons || [], cookie: item.cookie || null };
@@ -117,10 +119,10 @@ async function handleDebuggerEvent(source, method, params) {
   }
 
   if (method === "Network.responseReceivedExtraInfo") {
-    await addRecord("responseExtraInfo", {
+    bufferExtraInfo(responseExtraBuffers, source, params.requestId, {
       requestId: params.requestId,
-      requestKey: sequentialRequestKey(source, params.requestId, responseExtraGenerations),
       target: target,
+      eventReceivedAt: new Date().toISOString(),
       statusCode: params.statusCode,
       headers: Object.assign({}, params.headers || {}),
       blockedCookies: (params.blockedCookies || []).map(function (item) { return { blockedReasons: item.blockedReasons || [] }; })
@@ -132,6 +134,7 @@ async function handleDebuggerEvent(source, method, params) {
     var res = params.response || {};
     var responseRec = responseRecordFromPayload(params.requestId, requestKey(source, params.requestId), params.type, params.timestamp, res, target, false);
     var knownKey = requestKey(source, params.requestId);
+    if (params.hasExtraInfo) expectResponseExtraInfo(source, params.requestId, knownKey);
     var known = requestMap.get(knownKey) || {};
     known.response = responseRec;
     requestMap.set(knownKey, known);
@@ -261,7 +264,10 @@ async function handleDebuggerEvent(source, method, params) {
 
   if (method === "Page.frameNavigated") {
     if (!source.targetId && params.frame && params.frame.id) rootFrameIds.add(params.frame.id);
-    if (params.frame && params.frame.url) rememberAllowedOrigin(params.frame.url);
+    if (params.frame && params.frame.url) {
+      rememberAllowedOrigin(params.frame.url);
+      rememberAllowedTargetUrl(params.frame.url);
+    }
     await addRecord("navigation", { target: target, frame: params.frame || params });
     if (!source.targetId && params.frame && !params.frame.parentId) {
       setTimeout(function () { capturePageState("navigation"); }, 700);
