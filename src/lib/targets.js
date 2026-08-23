@@ -53,6 +53,7 @@
     var origin = originForUrl(info.url);
     if (!origin || (scope.allowedOrigins || []).indexOf(origin) < 0) return false;
     if (typeof info.tabId !== "number" && (scope.ambiguousOrigins || []).indexOf(origin) >= 0) return false;
+    if (typeof info.tabId !== "number") return true;
     return (scope.allowedUrls || []).indexOf(info.url) >= 0;
   }
 

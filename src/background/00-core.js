@@ -302,7 +302,31 @@ function bufferExtraInfo(map, source, requestId, data) {
   appendMapValue(map, requestBaseKey(source, requestId), data);
 }
 
+function bridgeOrphanExtraInfo(bufferMap, expectedMap) {
+  var moves = [];
+  bufferMap.forEach(function (entries, base) {
+    if ((expectedMap.get(base) || []).length) return;
+    var separator = base.lastIndexOf("|");
+    var requestId = separator >= 0 ? base.slice(separator + 1) : "";
+    var candidates = [];
+    expectedMap.forEach(function (keys, candidateBase) {
+      if (candidateBase !== base && candidateBase.endsWith("|" + requestId) && keys.length) candidates.push(candidateBase);
+    });
+    if (candidates.length === 1) moves.push({ from: base, to: candidates[0], entries: entries });
+  });
+  moves.forEach(function (move) {
+    move.entries.forEach(function (entry) {
+      entry.deliveredViaSourceBase = move.from;
+      entry.bridgedAcrossSource = true;
+      appendMapValue(bufferMap, move.to, entry);
+    });
+    bufferMap.delete(move.from);
+  });
+}
+
 async function flushAllExtraInfo() {
+  bridgeOrphanExtraInfo(requestExtraBuffers, requestHopKeys);
+  bridgeOrphanExtraInfo(responseExtraBuffers, responseExtraExpectedKeys);
   var bases = new Set();
   requestExtraBuffers.forEach(function (_, key) { bases.add(key); });
   responseExtraBuffers.forEach(function (_, key) { bases.add(key); });
@@ -442,15 +466,19 @@ function rememberAllowedTargetUrl(url) {
   } catch (_) {}
 }
 
-async function discoveryCommand(debuggee, method, params) {
+async function discoveryCommand(debuggee, method, params, optionalFallback) {
   try {
     return await command(debuggee, method, params);
   } catch (error) {
     var code = "target-discovery-command-failed:" + method;
     if (!targetDiscoveryFailureCodes.has(code)) {
       targetDiscoveryFailureCodes.add(code);
-      markCompletenessIssue("target-discovery-command-failed", { method: method, reason: error.message || String(error) });
-      await addRecord("targetDiscoveryFailed", { method: method, reason: error.message || String(error) });
+      if (optionalFallback) {
+        await addRecord("targetDiscoveryFallback", { method: method, reason: error.message || String(error), fallback: "chrome.debugger.getTargets and auto-attach" });
+      } else {
+        markCompletenessIssue("target-discovery-command-failed", { method: method, reason: error.message || String(error) });
+        await addRecord("targetDiscoveryFailed", { method: method, reason: error.message || String(error) });
+      }
     }
     return null;
   }
@@ -588,7 +616,7 @@ async function pollLegacyTargets() {
     updateAmbiguousTargetOrigins(globalSnapshot);
     var newlySeen = [];
     if (flatSessionsSupported) {
-      var protocolResult = await discoveryCommand({ tabId: state.tabId }, "Target.getTargets");
+      var protocolResult = await discoveryCommand({ tabId: state.tabId }, "Target.getTargets", undefined, true);
       var protocolTargets = protocolResult && protocolResult.targetInfos || [];
       for (var p = 0; p < protocolTargets.length; p += 1) {
         var protocolInfo = WebCaptrueTargets.normalize(protocolTargets[p]);
@@ -683,8 +711,8 @@ async function discoverRelatedTargets() {
     (node.childFrames || []).forEach(collectFrames);
   }(frameTree && frameTree.frameTree));
   await refreshAllowedTargetUrls(root, true);
-  await discoveryCommand(root, "Target.setDiscoverTargets", { discover: true });
-  var result = await discoveryCommand(root, "Target.getTargets");
+  await discoveryCommand(root, "Target.setDiscoverTargets", { discover: true }, true);
+  var result = await discoveryCommand(root, "Target.getTargets", undefined, true);
   var infos = result && result.targetInfos || [];
   infos.forEach(function (info) { targetInfoMap.set(info.targetId, info); });
   for (var j = 0; j < infos.length; j += 1) await attachRelatedTarget(infos[j]);

@@ -313,7 +313,9 @@ function buildCompleteness(meta, records) {
       var response = responseKeys[key] || {};
       var request = requestByKey[key] || {};
       var streamingResponse = request.resourceType === "EventSource" || /text\/event-stream/i.test(response.mimeType || "");
-      var bodyNotExpected = request.method === "HEAD" || response.status === 204 || response.status === 205 || response.status === 304 || streamingResponse;
+      var headers = response.headers || {};
+      var contentLength = headers["content-length"] === undefined ? headers["Content-Length"] : headers["content-length"];
+      var bodyNotExpected = request.method === "HEAD" || Number(contentLength) === 0 || response.status === 204 || response.status === 205 || response.status === 304 || streamingResponse;
       if (!bodyNotExpected && !bodyKeys[key] && !skippedBodyKeys[key] && !excludedBodyKeys[key]) responsesWithoutBodyOrReason.push(key);
     });
   }

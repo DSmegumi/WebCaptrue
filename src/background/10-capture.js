@@ -270,7 +270,7 @@ async function stopCapture() {
   await captureFullPageScreenshot("final");
   await detachChildTargets();
   await tryCommand(debuggee, "Target.setAutoAttach", { autoAttach: false, waitForDebuggerOnStart: false, flatten: flatSessionsSupported });
-  await discoveryCommand(debuggee, "Target.setDiscoverTargets", { discover: false });
+  await discoveryCommand(debuggee, "Target.setDiscoverTargets", { discover: false }, true);
   expectedDetachKeys.add(sourceKey(debuggee));
   await debuggerDetach(debuggee);
   lastDebuggerEventAt = Date.now();

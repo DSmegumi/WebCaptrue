@@ -27,6 +27,14 @@ const main = http.createServer((req, res) => {
     res.end(JSON.stringify({ items: [{ id: 42, name: "sample" }], token: "fixture-secret" }));
     return;
   }
+  if (url.pathname === "/redirect/start") {
+    res.writeHead(302, { location: "/redirect/middle", "content-length": "0", "x-webcaptrue-hop": "one" }).end();
+    return;
+  }
+  if (url.pathname === "/redirect/middle") {
+    res.writeHead(307, { location: "/api/items?from=redirect", "content-length": "0", "x-webcaptrue-hop": "two" }).end();
+    return;
+  }
   if (url.pathname === "/api/submit" && req.method === "POST") {
     let body = "";
     req.on("data", chunk => { body += chunk; });

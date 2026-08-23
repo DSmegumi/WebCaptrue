@@ -148,6 +148,10 @@ async function handleDebuggerEvent(source, method, params) {
     if (!state.options.captureBodies) return;
     var reqKey = requestKey(source, params.requestId);
     var knownRequest = requestMap.get(reqKey) || {};
+    if (!knownRequest.requestId) {
+      await addRecord("responseBodyExcluded", { requestId: params.requestId, requestKey: reqKey, target: target, reason: "response began before capture; no request event was observed" });
+      return;
+    }
     var responseUrl = (knownRequest.response && knownRequest.response.url) || knownRequest.url || "";
     if (WebCaptrueTargets.isBrowserExtensionUrl(responseUrl)) {
       await addRecord("responseBodyExcluded", { requestId: params.requestId, requestKey: reqKey, target: target, url: responseUrl, reason: "browser extension artifact outside webpage origin" });

@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-08-23
+2026-08-24
 
 ## Current Objective
 
@@ -16,6 +16,9 @@ The extension now completes real start/stop/export flows in macOS Chrome 151. A 
 
 - Added Chrome-version-aware child Target capture: flat sessions on Chrome 125+ and scoped `targetId` polling fallback for Chrome 109.
 - Added a global, same-origin Target sweep so a Shared Worker that existed before capture is still attached; real export evidence includes its request, response, and response body.
+- Allows no-`tabId` same-origin Targets only when that origin is unambiguous across open tabs; ambiguous same-origin Targets remain excluded.
+- Treats unsupported `Target.setDiscoverTargets` / `Target.getTargets` calls as audited fallback usage when `chrome.debugger.getTargets` and auto-attach remain available, instead of reporting a false data gap.
+- Bridges root-delivered request/response ExtraInfo to a unique child-session request with the same CDP request ID, preserving the original delivery source in the record; ambiguous matches still remain explicit gaps.
 - Added explicit completeness output: `integrity/completeness.json`, failures, truncations, exclusions, and export-stage redaction audit.
 - Preserved redirect chains with generation-qualified request keys so reused CDP request IDs no longer overwrite earlier hops.
 - Serialized debugger events per source and defers ExtraInfo association until all redirect hops are known; ambiguous/missing ExtraInfo is retained with candidates and an explicit completeness issue instead of being mislinked.
@@ -48,23 +51,25 @@ The extension now completes real start/stop/export flows in macOS Chrome 151. A 
 - Other observed paths: Dedicated Worker, Service Worker, iframe/OOPIF request, WebSocket, SSE, DOM, IndexedDB, Cache Storage, screenshots, interactions, and runtime exception.
 - Earlier 68 MB artifact was reduced to 3.5 MB by removing redundant timeline payload copies and explicitly excluding third-party extension artifacts.
 - `WebCaptrue_20260823_152014.zip`: final export-stage redaction acceptance passed; ZIP integrity passed, 26 redactions were audited, no raw fixture password/token/key remained outside screenshots, and JavaScript remained syntactically structured with quoted `[REDACTED]` literals.
+- `WebCaptrue_20260824_002823.zip`: final automated toolbar start/stop acceptance passed in Chrome 151; ZIP integrity passed and `integrity/completeness.json` reports `no-known-gaps`, zero runtime issues, zero failures, and zero truncations.
+- The final export contains 19 requests, 20 responses, 17 response bodies, all three worker paths (Dedicated/Shared/Service Worker), the complete 302 → 307 → 200 redirect chain, four WebSocket lifecycle/frame events, six storage snapshots, six screenshots, eleven interactions, one exception, and 68 audited export-time redactions.
+- A plaintext scan of all non-screenshot export files found none of the fixture password/token/key values. Screenshots remain intentionally raw pixels.
 
 ### Not Yet Run
 
 - Windows 7 / Chrome 109 installation and end-to-end regression.
 - Long-duration and large-session budgets, tab crash, debugger takeover, and service-worker restart recovery.
-- The updated cross-origin fixture CORS-success branch was not rerun because restarting the local listener was blocked by the workspace approval-credit limit; the server file passes syntax validation and the previous run already captured the OOPIF request/failure path.
 
 ## Known Issues And Risks
 
-- Current Chrome exports honestly report `known-gaps` when a worker bootstrap request has no terminal CDP event/body or a transient anonymous script disappears before `Debugger.getScriptSource`; these are not silently upgraded to complete.
+- `no-known-gaps` means the implemented checks found no missing datum in the exercised fixture; it is not proof that Chrome exposed every possible datum.
 - Capture limits are now explicit per item, but a total long-session byte budget and stress acceptance are still pending.
 - Screenshots are intentionally preserved as captured pixels and may display business-sensitive text; they are not OCR-redacted.
 - The current-Chrome test proves the modern flat-session path plus scoped Shared Worker fallback, not Chrome 109 runtime behavior.
 
 ## Next Action
 
-Run the same fixture and acceptance checklist on Windows 7 / Chrome 109. If no machine is available, next implement bounded session totals and a regression for worker-bootstrap request accounting without hiding genuine gaps.
+Run the same fixture and acceptance checklist on Windows 7 / Chrome 109. If no machine is available, next implement and stress-test bounded session totals without hiding genuine gaps.
 
 ## Important Files
 

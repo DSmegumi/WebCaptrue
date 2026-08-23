@@ -125,7 +125,7 @@ async function exportSession(sessionId, meta) {
   files.push(textFile("interactions/actions.jsonl", jsonl(interactions)));
   files.push(textFile("runtime/console.jsonl", jsonl((byType.console || []).concat(byType.log || []))));
   files.push(textFile("runtime/exceptions.jsonl", jsonl(byType.exception || [])));
-  files.push(textFile("runtime/targets.jsonl", jsonl((byType.targetDiscovery || []).concat(byType.targetAttached || []).concat(byType.targetAttachFailed || []).concat(byType.targetAutoAttachFailed || []).concat(byType.targetDetached || []).concat(byType.targetDestroyed || []))));
+  files.push(textFile("runtime/targets.jsonl", jsonl((byType.targetDiscovery || []).concat(byType.targetDiscoveryFallback || []).concat(byType.targetAttached || []).concat(byType.targetAttachFailed || []).concat(byType.targetAutoAttachFailed || []).concat(byType.targetDetached || []).concat(byType.targetDestroyed || []))));
   files.push(textFile("network/websocket.jsonl", jsonl(byType.webSocket || [])));
   files.push(textFile("network/eventsource.jsonl", jsonl(byType.eventSource || [])));
 

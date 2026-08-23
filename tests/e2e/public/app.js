@@ -6,8 +6,9 @@ const worker = new Worker("/worker.js");
 worker.onmessage = event => console.log("worker", event.data);
 worker.postMessage("ping");
 
+let shared = null;
 if (typeof SharedWorker === "function") {
-  const shared = new SharedWorker("/shared-worker.js");
+  shared = new SharedWorker("/shared-worker.js");
   shared.port.onmessage = event => console.log("shared-worker", event.data);
   shared.port.start();
   shared.port.postMessage("ping");
@@ -40,6 +41,26 @@ document.querySelector("#submit").addEventListener("click", async () => {
     body: JSON.stringify({ name: document.querySelector("#normal").value, password: document.querySelector("#password").value })
   });
   output.textContent = JSON.stringify(await response.json());
+});
+
+document.querySelector("#redirect").addEventListener("click", async () => {
+  const response = await fetch("/redirect/start");
+  output.textContent = JSON.stringify(await response.json());
+});
+
+document.querySelector("#workers").addEventListener("click", () => {
+  worker.postMessage("capture");
+  if (shared) shared.port.postMessage("capture");
+  navigator.serviceWorker.ready.then(registration => {
+    const target = registration.active || registration.waiting || registration.installing;
+    if (target) target.postMessage("capture-fetch");
+  });
+});
+
+document.querySelector("#websocket").addEventListener("click", () => {
+  const captureSocket = new WebSocket("ws://127.0.0.1:8765/ws");
+  captureSocket.addEventListener("open", () => captureSocket.send(JSON.stringify({ type: "captured", token: "fixture-websocket-token" })));
+  captureSocket.addEventListener("message", event => console.log("captured-websocket", event.data));
 });
 
 document.querySelector("#error").addEventListener("click", () => setTimeout(() => { throw new Error("WebCaptrue fixture exception"); }));

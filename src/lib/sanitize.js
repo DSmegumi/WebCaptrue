@@ -36,7 +36,7 @@
   }
 
   function sourceText(value, audit, path) {
-    return String(value || "").replace(/((?:password|passwd|pwd|access[_-]?token|refresh[_-]?token|api[_-]?key|secret|authorization)\s*[=:]\s*)(["'])(.*?)\2/ig, function (_, prefix, quote) {
+    return String(value || "").replace(/((?:password|passwd|pwd|token|access[_-]?token|refresh[_-]?token|api[_-]?key|secret|session[_-]?id|authorization|cookie)\s*[=:]\s*)(["'])(.*?)\2/ig, function (_, prefix, quote) {
       note(audit, "source-literal", path);
       return prefix + quote + "[REDACTED]" + quote;
     });
