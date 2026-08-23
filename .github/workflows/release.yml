@@ -1,0 +1,77 @@
+name: Release CRX
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "dist/*.crx"
+      - "manifest.json"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./manifest.json').version")"
+          TAG="v${VERSION}"
+          ASSET="dist/WebCaptrue-${VERSION}.crx"
+          test -f "$ASSET" || { echo "::error::Missing signed CRX asset: $ASSET"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+
+      - name: Verify CRX3 package
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+          p = Path("${{ steps.meta.outputs.asset }}")
+          data = p.read_bytes()
+          if data[:4] != b"Cr24":
+              raise SystemExit("Not a CRX package: invalid magic")
+          version = struct.unpack("<I", data[4:8])[0]
+          if version != 3:
+              raise SystemExit(f"Expected CRX3, got CRX version {version}")
+          print(f"Verified CRX3: {p} ({len(data)} bytes)")
+          PY
+
+      - name: Generate checksum
+        shell: bash
+        run: |
+          sha256sum "${{ steps.meta.outputs.asset }}" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          ASSET: ${{ steps.meta.outputs.asset }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ASSET" SHA256SUMS.txt --clobber
+          else
+            gh release create "$TAG" \
+              "$ASSET" \
+              SHA256SUMS.txt \
+              --target "$GITHUB_SHA" \
+              --title "WebCaptrue $TAG" \
+              --generate-notes
+          fi
