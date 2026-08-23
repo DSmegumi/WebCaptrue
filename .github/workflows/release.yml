@@ -5,9 +5,8 @@ on:
     branches:
       - main
     paths:
-      - "dist/*.crx"
+      - "release-assets/*.json"
       - "manifest.json"
-      - ".github/workflows/release.yml"
   workflow_dispatch:
 
 permissions:
@@ -29,19 +28,51 @@ jobs:
           set -euo pipefail
           VERSION="$(node -p "require('./manifest.json').version")"
           TAG="v${VERSION}"
-          ASSET="dist/WebCaptrue-${VERSION}.crx"
-          test -f "$ASSET" || { echo "::error::Missing signed CRX asset: $ASSET"; exit 1; }
+          DESCRIPTOR="release-assets/${VERSION}.json"
+          test -f "$DESCRIPTOR" || { echo "::error::Missing release descriptor: $DESCRIPTOR"; exit 1; }
+          FILE_NAME="$(node -p "require('./${DESCRIPTOR}').fileName")"
+          DOWNLOAD_URL="$(node -p "require('./${DESCRIPTOR}').downloadUrl")"
+          EXPECTED_SHA="$(node -p "require('./${DESCRIPTOR}').sha256")"
+          EXPECTED_SIZE="$(node -p "require('./${DESCRIPTOR}').size")"
+          test -n "$FILE_NAME" && test -n "$DOWNLOAD_URL" && test -n "$EXPECTED_SHA" && test -n "$EXPECTED_SIZE"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+          echo "file_name=$FILE_NAME" >> "$GITHUB_OUTPUT"
+          echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
+          echo "expected_sha=$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
+          echo "expected_size=$EXPECTED_SIZE" >> "$GITHUB_OUTPUT"
+
+      - name: Download signed CRX staging asset
+        shell: bash
+        env:
+          DOWNLOAD_URL: ${{ steps.meta.outputs.download_url }}
+          FILE_NAME: ${{ steps.meta.outputs.file_name }}
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-delay 2 --output "$FILE_NAME" "$DOWNLOAD_URL"
+          test -s "$FILE_NAME"
+
+      - name: Verify size and SHA-256
+        shell: bash
+        env:
+          FILE_NAME: ${{ steps.meta.outputs.file_name }}
+          EXPECTED_SHA: ${{ steps.meta.outputs.expected_sha }}
+          EXPECTED_SIZE: ${{ steps.meta.outputs.expected_size }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SIZE="$(stat -c '%s' "$FILE_NAME")"
+          test "$ACTUAL_SIZE" = "$EXPECTED_SIZE" || { echo "::error::CRX size mismatch: expected $EXPECTED_SIZE, got $ACTUAL_SIZE"; exit 1; }
+          echo "$EXPECTED_SHA  $FILE_NAME" | sha256sum --check --strict
 
       - name: Verify CRX3 package
         shell: bash
+        env:
+          FILE_NAME: ${{ steps.meta.outputs.file_name }}
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import struct
-          p = Path("${{ steps.meta.outputs.asset }}")
+          import os, struct
+          p = Path(os.environ["FILE_NAME"])
           data = p.read_bytes()
           if data[:4] != b"Cr24":
               raise SystemExit("Not a CRX package: invalid magic")
@@ -53,23 +84,25 @@ jobs:
 
       - name: Generate checksum
         shell: bash
+        env:
+          FILE_NAME: ${{ steps.meta.outputs.file_name }}
         run: |
-          sha256sum "${{ steps.meta.outputs.asset }}" > SHA256SUMS.txt
+          sha256sum "$FILE_NAME" > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.meta.outputs.tag }}
-          ASSET: ${{ steps.meta.outputs.asset }}
+          FILE_NAME: ${{ steps.meta.outputs.file_name }}
         shell: bash
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$ASSET" SHA256SUMS.txt --clobber
+            gh release upload "$TAG" "$FILE_NAME" SHA256SUMS.txt --clobber
           else
             gh release create "$TAG" \
-              "$ASSET" \
+              "$FILE_NAME" \
               SHA256SUMS.txt \
               --target "$GITHUB_SHA" \
               --title "WebCaptrue $TAG" \
