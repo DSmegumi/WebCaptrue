@@ -4,6 +4,19 @@ WebCaptrue 是一个面向内网、隔离网和受限办公环境的一键浏览
 
 它的目标不是单纯保存网页，而是在无法直接使用 Codex、Claude Code 等 AI 开发工具的环境中，把一次网页业务操作中浏览器能够观察到的关键数据完整保存下来，导出为一个 ZIP，之后再交给 AI 做接口梳理、网页分析、故障排查和辅助开发。
 
+## 下载与安装
+
+正式签名的浏览器安装包通过 **GitHub Releases** 发布。每个 Release 会提供：
+
+- `WebCaptrue-X.Y.Z.crx`
+- `SHA256SUMS.txt`
+- 版本说明
+- GitHub 自动生成的 Source code ZIP / tar.gz
+
+开发和调试时仍可以通过 `chrome://extensions` 加载仓库目录。正式分发优先使用 Release 中的签名 CRX。
+
+发布流程和签名管理说明见 [`docs/RELEASES.md`](docs/RELEASES.md)。签名私钥不会存放在 GitHub 仓库或 Release 中。
+
 ## 兼容基线
 
 - Google Chrome 109+
@@ -41,6 +54,12 @@ WebCaptrue 是一个面向内网、隔离网和受限办公环境的一键浏览
 - Chrome 109 Offscreen Document heartbeat
 
 ## 使用方式
+
+### 正式安装
+
+从 GitHub Releases 下载对应版本的 `.crx` 安装包，并按照目标 Chrome 环境允许的扩展安装方式进行安装。
+
+### 开发者模式
 
 1. 打开 `chrome://extensions`。
 2. 开启“开发者模式”。
@@ -89,7 +108,7 @@ WebCaptrue 默认：
 npm test
 ```
 
-项目开发规则见 [`AGENTS.md`](AGENTS.md)。完整目标、里程碑、当前功能和后续工作见 [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)。
+项目开发规则见 [`AGENTS.md`](AGENTS.md)。完整目标、里程碑、当前功能和后续工作见 [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md)。发布流程见 [`docs/RELEASES.md`](docs/RELEASES.md)。
 
 ## 当前状态
 
