@@ -217,6 +217,7 @@ async function startCapture(tabId, options) {
   allowedTargetUrls.clear();
   ambiguousTargetOrigins.clear();
   reportedAmbiguousTargetOrigins.clear();
+  reportedUnattributedTargetIds.clear();
   expectedDetachKeys.clear();
   legacySeenTargetIds.clear();
   rootTargetId = null;

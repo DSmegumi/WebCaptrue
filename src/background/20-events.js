@@ -148,10 +148,7 @@ async function handleDebuggerEvent(source, method, params) {
     if (!state.options.captureBodies) return;
     var reqKey = requestKey(source, params.requestId);
     var knownRequest = requestMap.get(reqKey) || {};
-    if (!knownRequest.requestId) {
-      await addRecord("responseBodyExcluded", { requestId: params.requestId, requestKey: reqKey, target: target, reason: "response began before capture; no request event was observed" });
-      return;
-    }
+    var requestWasObserved = !!knownRequest.requestId;
     var responseUrl = (knownRequest.response && knownRequest.response.url) || knownRequest.url || "";
     if (WebCaptrueTargets.isBrowserExtensionUrl(responseUrl)) {
       await addRecord("responseBodyExcluded", { requestId: params.requestId, requestKey: reqKey, target: target, url: responseUrl, reason: "browser extension artifact outside webpage origin" });
@@ -182,6 +179,10 @@ async function handleDebuggerEvent(source, method, params) {
       });
     } catch (error) {
       await addRecord("responseBodySkipped", { requestId: params.requestId, requestKey: reqKey, target: target, reason: error.message || String(error) });
+      if (!requestWasObserved) {
+        markCompletenessIssue("pre-capture-response-body-unavailable", { requestId: params.requestId, requestKey: reqKey, reason: error.message || String(error) });
+        await addRecord("responseBodyUnavailableGap", { requestId: params.requestId, requestKey: reqKey, target: target, reason: "response began before capture and its body could not be recovered" });
+      }
     }
     return;
   }

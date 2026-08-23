@@ -22,6 +22,7 @@ var allowedTargetOrigins = new Set();
 var allowedTargetUrls = new Set();
 var ambiguousTargetOrigins = new Set();
 var reportedAmbiguousTargetOrigins = new Set();
+var reportedUnattributedTargetIds = new Set();
 var expectedDetachKeys = new Set();
 var rootTargetId = null;
 var flatSessionsSupported = false;
@@ -302,31 +303,7 @@ function bufferExtraInfo(map, source, requestId, data) {
   appendMapValue(map, requestBaseKey(source, requestId), data);
 }
 
-function bridgeOrphanExtraInfo(bufferMap, expectedMap) {
-  var moves = [];
-  bufferMap.forEach(function (entries, base) {
-    if ((expectedMap.get(base) || []).length) return;
-    var separator = base.lastIndexOf("|");
-    var requestId = separator >= 0 ? base.slice(separator + 1) : "";
-    var candidates = [];
-    expectedMap.forEach(function (keys, candidateBase) {
-      if (candidateBase !== base && candidateBase.endsWith("|" + requestId) && keys.length) candidates.push(candidateBase);
-    });
-    if (candidates.length === 1) moves.push({ from: base, to: candidates[0], entries: entries });
-  });
-  moves.forEach(function (move) {
-    move.entries.forEach(function (entry) {
-      entry.deliveredViaSourceBase = move.from;
-      entry.bridgedAcrossSource = true;
-      appendMapValue(bufferMap, move.to, entry);
-    });
-    bufferMap.delete(move.from);
-  });
-}
-
 async function flushAllExtraInfo() {
-  bridgeOrphanExtraInfo(requestExtraBuffers, requestHopKeys);
-  bridgeOrphanExtraInfo(responseExtraBuffers, responseExtraExpectedKeys);
   var bases = new Set();
   requestExtraBuffers.forEach(function (_, key) { bases.add(key); });
   responseExtraBuffers.forEach(function (_, key) { bases.add(key); });
@@ -512,6 +489,16 @@ function updateAmbiguousTargetOrigins(targets) {
   });
 }
 
+async function reportUnattributedTargetCandidate(rawInfo) {
+  var info = WebCaptrueTargets.normalize(rawInfo);
+  if (!info.targetId || reportedUnattributedTargetIds.has(info.targetId) || typeof info.tabId === "number" || !capturableTargetType(info.type)) return;
+  var origin = WebCaptrueTargets.originForUrl(info.url);
+  if (!origin || !allowedTargetOrigins.has(origin) || ambiguousTargetOrigins.has(origin) || allowedTargetUrls.has(info.url)) return;
+  reportedUnattributedTargetIds.add(info.targetId);
+  markCompletenessIssue("target-attribution-unproven", { targetId: info.targetId, type: info.type, url: info.url || "" });
+  await addRecord("targetAttributionGap", { targetId: info.targetId, type: info.type, url: info.url || "", reason: "same-origin Target URL was not observed from the captured page" });
+}
+
 function targetRelatedToRoot(info) {
   if (!info || !rootTargetId || info.targetId === rootTargetId) return false;
   if (info.parentFrameId && rootFrameIds.has(info.parentFrameId)) return true;
@@ -627,7 +614,10 @@ async function pollLegacyTargets() {
           allowedOrigins: Array.from(allowedTargetOrigins),
           allowedUrls: Array.from(allowedTargetUrls),
           ambiguousOrigins: Array.from(ambiguousTargetOrigins)
-        })) continue;
+        })) {
+          await reportUnattributedTargetCandidate(protocolInfo);
+          continue;
+        }
         if (!legacySeenTargetIds.has(protocolInfo.targetId)) {
           legacySeenTargetIds.add(protocolInfo.targetId);
           newlySeen.push({ targetId: protocolInfo.targetId, type: protocolInfo.type, url: protocolInfo.url || "" });
@@ -644,7 +634,10 @@ async function pollLegacyTargets() {
           allowedOrigins: Array.from(allowedTargetOrigins),
           allowedUrls: Array.from(allowedTargetUrls),
           ambiguousOrigins: Array.from(ambiguousTargetOrigins)
-        })) continue;
+        })) {
+          await reportUnattributedTargetCandidate(globalInfo);
+          continue;
+        }
         if (!legacySeenTargetIds.has(globalInfo.targetId)) {
           legacySeenTargetIds.add(globalInfo.targetId);
           newlySeen.push({ targetId: globalInfo.targetId, type: globalInfo.type, url: globalInfo.url || "" });
@@ -665,7 +658,10 @@ async function pollLegacyTargets() {
         allowedOrigins: Array.from(allowedTargetOrigins),
         allowedUrls: Array.from(allowedTargetUrls),
         ambiguousOrigins: Array.from(ambiguousTargetOrigins)
-      })) continue;
+      })) {
+        await reportUnattributedTargetCandidate(info);
+        continue;
+      }
       if (!legacySeenTargetIds.has(info.targetId)) {
         legacySeenTargetIds.add(info.targetId);
         newlySeen.push({ targetId: info.targetId, type: info.type, url: info.url || "" });
@@ -711,12 +707,12 @@ async function discoverRelatedTargets() {
     (node.childFrames || []).forEach(collectFrames);
   }(frameTree && frameTree.frameTree));
   await refreshAllowedTargetUrls(root, true);
-  await discoveryCommand(root, "Target.setDiscoverTargets", { discover: true }, true);
-  var result = await discoveryCommand(root, "Target.getTargets", undefined, true);
+  flatSessionsSupported = WebCaptrueTargets.supportsFlatSessions(navigator.userAgent);
+  await discoveryCommand(root, "Target.setDiscoverTargets", { discover: true }, flatSessionsSupported);
+  var result = await discoveryCommand(root, "Target.getTargets", undefined, flatSessionsSupported);
   var infos = result && result.targetInfos || [];
   infos.forEach(function (info) { targetInfoMap.set(info.targetId, info); });
   for (var j = 0; j < infos.length; j += 1) await attachRelatedTarget(infos[j]);
-  flatSessionsSupported = WebCaptrueTargets.supportsFlatSessions(navigator.userAgent);
   state.completeness.targetMode = flatSessionsSupported ? "flat-session" : "targetId-poll";
   var flatEnabled = flatSessionsSupported ? await enableFlatAutoAttach(root) : false;
   if (flatSessionsSupported && !flatEnabled) {

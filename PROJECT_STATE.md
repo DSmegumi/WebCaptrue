@@ -10,15 +10,15 @@ Protect capture completeness and structural fidelity first, then apply auditable
 
 ## Current State
 
-The extension now completes real start/stop/export flows in macOS Chrome 151. A local E2E fixture confirms page, iframe, cross-origin iframe, Dedicated Worker, pre-existing Shared Worker, Service Worker, Fetch, WebSocket, SSE, DOM, storage, screenshots, interaction, and exception paths. The hard Windows 7 / Chrome 109 acceptance gate remains untested.
+The extension now completes real start/stop/export flows in macOS Chrome 151. A local E2E fixture exercises page, iframe, cross-origin iframe, Dedicated Worker, pre-existing Shared Worker, Service Worker, Fetch, WebSocket, SSE, DOM, storage, screenshots, interaction, and exception paths. The latest safe-attribution export reports the unresolved browser evidence as `known-gaps` instead of mis-associating it. The hard Windows 7 / Chrome 109 acceptance gate remains untested.
 
 ## Completed Work
 
 - Added Chrome-version-aware child Target capture: flat sessions on Chrome 125+ and scoped `targetId` polling fallback for Chrome 109.
-- Added a global, same-origin Target sweep so a Shared Worker that existed before capture is still attached; real export evidence includes its request, response, and response body.
-- Allows no-`tabId` same-origin Targets only when that origin is unambiguous across open tabs; ambiguous same-origin Targets remain excluded.
+- Added a global Target sweep so a Shared Worker that existed before capture is detected; it is attached only when its exact URL was observed from the captured page, otherwise it remains an explicit attribution gap.
+- Requires no-`tabId` fallback Targets to have an observed exact URL and an unambiguous origin; same-origin alone is not accepted as ownership evidence.
+- Records an unobserved same-origin no-`tabId` Target as an attribution gap instead of silently attaching it or silently omitting the candidate.
 - Treats unsupported `Target.setDiscoverTargets` / `Target.getTargets` calls as audited fallback usage when `chrome.debugger.getTargets` and auto-attach remain available, instead of reporting a false data gap.
-- Bridges root-delivered request/response ExtraInfo to a unique child-session request with the same CDP request ID, preserving the original delivery source in the record; ambiguous matches still remain explicit gaps.
 - Added explicit completeness output: `integrity/completeness.json`, failures, truncations, exclusions, and export-stage redaction audit.
 - Preserved redirect chains with generation-qualified request keys so reused CDP request IDs no longer overwrite earlier hops.
 - Serialized debugger events per source and defers ExtraInfo association until all redirect hops are known; ambiguous/missing ExtraInfo is retained with candidates and an explicit completeness issue instead of being mislinked.
@@ -51,25 +51,29 @@ The extension now completes real start/stop/export flows in macOS Chrome 151. A 
 - Other observed paths: Dedicated Worker, Service Worker, iframe/OOPIF request, WebSocket, SSE, DOM, IndexedDB, Cache Storage, screenshots, interactions, and runtime exception.
 - Earlier 68 MB artifact was reduced to 3.5 MB by removing redundant timeline payload copies and explicitly excluding third-party extension artifacts.
 - `WebCaptrue_20260823_152014.zip`: final export-stage redaction acceptance passed; ZIP integrity passed, 26 redactions were audited, no raw fixture password/token/key remained outside screenshots, and JavaScript remained syntactically structured with quoted `[REDACTED]` literals.
-- `WebCaptrue_20260824_002823.zip`: final automated toolbar start/stop acceptance passed in Chrome 151; ZIP integrity passed and `integrity/completeness.json` reports `no-known-gaps`, zero runtime issues, zero failures, and zero truncations.
-- The final export contains 19 requests, 20 responses, 17 response bodies, all three worker paths (Dedicated/Shared/Service Worker), the complete 302 → 307 → 200 redirect chain, four WebSocket lifecycle/frame events, six storage snapshots, six screenshots, eleven interactions, one exception, and 68 audited export-time redactions.
+- `WebCaptrue_20260824_002823.zip`: automated toolbar start/stop and ZIP integrity passed in Chrome 151. Its initial `no-known-gaps` verdict was invalidated during review because cross-Target ExtraInfo had been associated using a raw CDP request ID; that unsafe association was removed.
+- The invalidated `002823` export contains 19 requests, 20 responses, 17 response bodies, all three worker paths (Dedicated/Shared/Service Worker), the complete 302 → 307 → 200 redirect chain, four WebSocket lifecycle/frame events, six storage snapshots, six screenshots, eleven interactions, one exception, and 68 audited export-time redactions; it is retained only as debugging evidence, not acceptance evidence.
 - A plaintext scan of all non-screenshot export files found none of the fixture password/token/key values. Screenshots remain intentionally raw pixels.
+- `WebCaptrue_20260824_003920.zip`: post-review safe-attribution export passed ZIP integrity and automatic toolbar start/stop. It captured 12 requests, 13 responses, 9 bodies, the 302 → 307 → 200 redirect chain, Dedicated Worker, Service Worker, iframe/OOPIF, WebSocket, six storage snapshots, six screenshots, eleven interactions, and 66 audited redactions. Verdict is honestly `known-gaps`: one unproven pre-existing Shared Worker candidate, one unrecoverable pre-capture response body, and one root/Service-Worker ExtraInfo pair whose cross-Target association cannot be proven.
 
 ### Not Yet Run
 
 - Windows 7 / Chrome 109 installation and end-to-end regression.
 - Long-duration and large-session budgets, tab crash, debugger takeover, and service-worker restart recovery.
+- Safe ownership proof for a pre-existing Shared Worker whose script URL is not exposed in the page's resource timing data.
+- Safe cross-Target correlation for ExtraInfo that Chrome delivers on the root debugger source while the request/response events arrive on a child session.
 
 ## Known Issues And Risks
 
 - `no-known-gaps` means the implemented checks found no missing datum in the exercised fixture; it is not proof that Chrome exposed every possible datum.
+- The latest safe run remains `known-gaps`; raw CDP request IDs are never used alone to bridge root and child-session ExtraInfo.
 - Capture limits are now explicit per item, but a total long-session byte budget and stress acceptance are still pending.
 - Screenshots are intentionally preserved as captured pixels and may display business-sensitive text; they are not OCR-redacted.
 - The current-Chrome test proves the modern flat-session path plus scoped Shared Worker fallback, not Chrome 109 runtime behavior.
 
 ## Next Action
 
-Run the same fixture and acceptance checklist on Windows 7 / Chrome 109. If no machine is available, next implement and stress-test bounded session totals without hiding genuine gaps.
+Without a Windows 7 machine, next design a browser-evidence-based ownership/correlation mechanism for pre-existing Shared Workers and cross-source ExtraInfo; if proof is unavailable, retain the current explicit gaps. Then implement and stress-test bounded session totals.
 
 ## Important Files
 

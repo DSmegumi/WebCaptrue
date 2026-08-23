@@ -26,10 +26,10 @@ assert.equal(targets.isFallbackCandidate({ id: "worker-1", type: "worker", url: 
 assert.equal(targets.isFallbackCandidate({ id: "sw-1", type: "service_worker", url: "https://app.example.test/sw.js" }, scope), true);
 assert.equal(targets.isFallbackCandidate({ id: "blob-1", type: "worker", url: "blob:https://app.example.test/abc" }, scope), true);
 assert.equal(targets.isFallbackCandidate({ id: "other", type: "worker", url: "https://other.example.test/worker.js" }, scope), false);
-assert.equal(targets.isFallbackCandidate({ id: "same-origin-no-tab", type: "worker", url: "https://app.example.test/other-worker.js" }, scope), true);
+assert.equal(targets.isFallbackCandidate({ id: "same-origin-no-tab", type: "worker", url: "https://app.example.test/other-worker.js" }, scope), false);
 assert.equal(targets.isFallbackCandidate({ id: "same-url-other-tab", type: "worker", tabId: 8, url: "https://app.example.test/worker.js" }, scope), false);
 assert.equal(targets.isFallbackCandidate({ id: "no-tab-ambiguous", type: "worker", url: "https://app.example.test/worker.js" }, { ...scope, ambiguousOrigins: ["https://app.example.test"] }), false);
-assert.equal(targets.isFallbackCandidate({ id: "preexisting-shared-no-tab", type: "worker", url: "https://app.example.test/shared-worker.js" }, scope), true);
+assert.equal(targets.isFallbackCandidate({ id: "preexisting-shared-observed", type: "worker", url: "https://app.example.test/shared-worker.js" }, { ...scope, allowedUrls: scope.allowedUrls.concat("https://app.example.test/shared-worker.js") }), true);
 assert.equal(targets.isFallbackCandidate({ id: "root", type: "page", tabId: 7, url: "https://app.example.test/" }, scope), false);
 assert.equal(targets.isBrowserExtensionUrl("chrome-extension://abc/content.js"), true);
 assert.equal(targets.isBrowserExtensionUrl("https://app.example.test/app.js"), false);
