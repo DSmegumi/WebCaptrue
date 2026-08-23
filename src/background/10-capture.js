@@ -201,6 +201,11 @@ async function startCapture(tabId, options) {
   };
   requestMap.clear();
   requestGenerations.clear();
+  requestExtraGenerations.clear();
+  responseExtraGenerations.clear();
+  debuggerEventQueues.clear();
+  pendingDebuggerEvents.clear();
+  pendingRecordWrites.clear();
   capturedTargets.clear();
   capturedSessions.clear();
   targetInfoMap.clear();
@@ -216,6 +221,10 @@ async function startCapture(tabId, options) {
   targetPollRunning = false;
   lastInteraction = null;
   lastScreenshotAt = 0;
+  lastDebuggerEventAt = 0;
+  lastTargetScopeRefreshAt = 0;
+  targetDiscoveryFailureCodes.clear();
+  state.stopping = false;
   await db.clearSession(sessionId);
   try {
     await enableCaptureDomains(debuggee, "page");
@@ -248,20 +257,28 @@ async function stopCapture() {
   var stoppedState;
   var sessionId = state.sessionId;
   var debuggee = { tabId: state.tabId };
+  state.stopping = true;
+  await stopTargetPolling();
 
   await capturePageState("final");
   await captureClientStorage("final");
   await captureFullPageScreenshot("final");
   await detachChildTargets();
   await tryCommand(debuggee, "Target.setAutoAttach", { autoAttach: false, waitForDebuggerOnStart: false, flatten: flatSessionsSupported });
-  await tryCommand(debuggee, "Target.setDiscoverTargets", { discover: false });
+  await discoveryCommand(debuggee, "Target.setDiscoverTargets", { discover: false });
   expectedDetachKeys.add(sourceKey(debuggee));
   await debuggerDetach(debuggee);
-  expectedDetachKeys.delete(sourceKey(debuggee));
+  await waitForDebuggerQuiet();
   await waitForPendingDebuggerEvents();
+  capturedTargets.clear();
+  capturedSessions.clear();
+  expectedDetachKeys.clear();
+  updateTargetCounter();
   await addRecord("sessionStop", { stoppedAt: new Date().toISOString(), counters: state.counters });
+  await waitForPendingRecordWrites();
 
   state.active = false;
+  state.stopping = false;
   schedulePersist();
   stoppedState = cloneState();
 

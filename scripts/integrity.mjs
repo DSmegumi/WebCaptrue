@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
-const context = { self: {}, URL };
+const context = { self: {}, URL, URLSearchParams, atob, btoa, TextDecoder, TextEncoder };
 context.self.self = context.self;
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(path.join(root, "src/lib/targets.js"), "utf8"), context, { filename: "targets.js" });
@@ -20,13 +20,14 @@ const scope = {
   rootTargetId: "root",
   rootTabId: 7,
   allowedOrigins: ["https://app.example.test"],
-  allowedUrls: ["https://app.example.test/worker.js", "blob:https://app.example.test/abc"]
+  allowedUrls: ["https://app.example.test/worker.js", "https://app.example.test/sw.js", "blob:https://app.example.test/abc"]
 };
 assert.equal(targets.isFallbackCandidate({ id: "worker-1", type: "worker", url: "https://app.example.test/worker.js" }, scope), true);
 assert.equal(targets.isFallbackCandidate({ id: "sw-1", type: "service_worker", url: "https://app.example.test/sw.js" }, scope), true);
 assert.equal(targets.isFallbackCandidate({ id: "blob-1", type: "worker", url: "blob:https://app.example.test/abc" }, scope), true);
 assert.equal(targets.isFallbackCandidate({ id: "other", type: "worker", url: "https://other.example.test/worker.js" }, scope), false);
 assert.equal(targets.isFallbackCandidate({ id: "same-origin-other-tab", type: "worker", url: "https://app.example.test/other-worker.js" }, scope), false);
+assert.equal(targets.isFallbackCandidate({ id: "same-url-other-tab", type: "worker", tabId: 8, url: "https://app.example.test/worker.js" }, scope), false);
 assert.equal(targets.isFallbackCandidate({ id: "root", type: "page", tabId: 7, url: "https://app.example.test/" }, scope), false);
 assert.equal(targets.isBrowserExtensionUrl("chrome-extension://abc/content.js"), true);
 assert.equal(targets.isBrowserExtensionUrl("https://app.example.test/app.js"), false);
@@ -70,6 +71,10 @@ assert.equal(networkExport.records[0].data.headers.authorization, "[REDACTED]");
 assert.equal(networkExport.records[0].data.postData, '{"password":"[REDACTED]","rows":[1]}');
 assert.equal(networkExport.records[1].data.body, '{"token":"[REDACTED]","rows":[1]}');
 assert.equal(networkExport.records[2].data.snapshot.localStorage.fixture, '{"apiKey":"[REDACTED]","rows":[1]}');
+const base64Export = sanitize.exportRecords([
+  { type: "responseBody", data: { mimeType: "application/json", base64Encoded: true, body: btoa('{"password":"raw","rows":[1]}') } }
+]);
+assert.equal(atob(base64Export.records[0].data.body), '{"password":"[REDACTED]","rows":[1]}');
 
 context.WebCaptrueDB = function () {};
 context.setInterval = function () { return 0; };

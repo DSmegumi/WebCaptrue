@@ -24,7 +24,7 @@ function responseRecordFromPayload(requestId, key, resourceType, timestamp, res,
 }
 
 async function handleDebuggerEvent(source, method, params) {
-  if (!state.active || !isCapturedSource(source)) return;
+  if ((!state.active && !state.stopping) || !isCapturedSource(source)) return;
   var debuggee = debuggeeForSource(source);
   var target = targetDescriptor(source);
 
@@ -75,8 +75,8 @@ async function handleDebuggerEvent(source, method, params) {
       redirectedRequest.response = redirectResponse;
       requestMap.set(redirectKey, redirectedRequest);
       state.counters.responses += 1;
-      await addRecord("response", redirectResponse);
       advanceRequestGeneration(source, params.requestId);
+      await addRecord("response", redirectResponse);
     }
     var rec = {
       requestId: params.requestId,
@@ -106,7 +106,7 @@ async function handleDebuggerEvent(source, method, params) {
   if (method === "Network.requestWillBeSentExtraInfo") {
     await addRecord("requestExtraInfo", {
       requestId: params.requestId,
-      requestKey: requestKey(source, params.requestId),
+      requestKey: sequentialRequestKey(source, params.requestId, requestExtraGenerations),
       target: target,
       headers: Object.assign({}, params.headers || {}),
       associatedCookies: (params.associatedCookies || []).map(function (item) {
@@ -119,7 +119,7 @@ async function handleDebuggerEvent(source, method, params) {
   if (method === "Network.responseReceivedExtraInfo") {
     await addRecord("responseExtraInfo", {
       requestId: params.requestId,
-      requestKey: requestKey(source, params.requestId),
+      requestKey: sequentialRequestKey(source, params.requestId, responseExtraGenerations),
       target: target,
       statusCode: params.statusCode,
       headers: Object.assign({}, params.headers || {}),
@@ -271,12 +271,19 @@ async function handleDebuggerEvent(source, method, params) {
 }
 
 chrome.debugger.onEvent.addListener(function (source, method, params) {
-  var pending = handleDebuggerEvent(source, method, params || {}).catch(function (error) {
+  lastDebuggerEventAt = Date.now();
+  var queueKey = sourceKey(source);
+  var previous = debuggerEventQueues.get(queueKey) || Promise.resolve();
+  var pending = previous.catch(function () {}).then(function () {
+    return handleDebuggerEvent(source, method, params || {});
+  }).catch(function (error) {
     markCompletenessIssue("debugger-event-handling-failed", { source: sourceKey(source), method: method, reason: error.message || String(error) });
     return addRecord("eventHandlingFailed", { source: sourceKey(source), method: method, reason: error.message || String(error) });
   }).finally(function () {
     pendingDebuggerEvents.delete(pending);
+    if (debuggerEventQueues.get(queueKey) === pending) debuggerEventQueues.delete(queueKey);
   });
+  debuggerEventQueues.set(queueKey, pending);
   pendingDebuggerEvents.add(pending);
 });
 
@@ -290,7 +297,7 @@ chrome.debugger.onDetach.addListener(function (source, reason) {
     schedulePersist();
     return;
   }
-  if (state.active && source.tabId === state.tabId) {
+  if (state.active && !state.stopping && source.tabId === state.tabId) {
     state.active = false;
     state.lastError = "Debugger detached: " + reason;
     addRecord("debuggerDetached", { reason: reason });

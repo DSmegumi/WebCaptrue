@@ -49,10 +49,9 @@
     scope = scope || {};
     if (!info.targetId || info.targetId === scope.rootTargetId) return false;
     if (!isCapturableType(info.type)) return false;
-    if (typeof info.tabId === "number" && typeof scope.rootTabId === "number" && info.tabId === scope.rootTabId) return true;
+    if (typeof info.tabId === "number" && typeof scope.rootTabId === "number") return info.tabId === scope.rootTabId;
     var origin = originForUrl(info.url);
     if (!origin || (scope.allowedOrigins || []).indexOf(origin) < 0) return false;
-    if (info.type === "shared_worker" || info.type === "service_worker") return true;
     return (scope.allowedUrls || []).indexOf(info.url) >= 0;
   }
 

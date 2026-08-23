@@ -4,7 +4,6 @@
   if (window.__webcaptrueContentInstalled) return;
   window.__webcaptrueContentInstalled = true;
 
-  var inputTimers = new WeakMap();
   var MAX_IDB_DATABASES = 20;
   var MAX_IDB_STORES = 50;
   var MAX_IDB_ROWS_PER_STORE = 150;
@@ -315,12 +314,7 @@
   document.addEventListener("input", function (event) {
     var target = event.target;
     if (!target || !/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
-    var old = inputTimers.get(target);
-    if (old) clearTimeout(old);
-    inputTimers.set(target, setTimeout(function () {
-      emit("input", target);
-      inputTimers.delete(target);
-    }, 500));
+    emit("input", target);
   }, true);
 
   document.addEventListener("keydown", function (event) {

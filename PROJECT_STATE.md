@@ -18,10 +18,14 @@ The extension now completes real start/stop/export flows in macOS Chrome 151. A 
 - Added a global, same-origin Target sweep so a Shared Worker that existed before capture is still attached; real export evidence includes its request, response, and response body.
 - Added explicit completeness output: `integrity/completeness.json`, failures, truncations, exclusions, and export-stage redaction audit.
 - Preserved redirect chains with generation-qualified request keys so reused CDP request IDs no longer overwrite earlier hops.
-- Added a stop-time debugger-event drain before the final session marker and export, preventing in-flight asynchronous record writes from being omitted.
+- Serialized debugger events per source and independently sequenced redirect ExtraInfo records, preventing asynchronous IndexedDB writes from crossing redirect hops.
+- Added stop-time debugger quiet, event, and database-write drains before the final session marker and export; child Target mappings remain valid through the tail-event window.
 - Changed network and client-storage capture to retain the browser-exposed raw structure in the local session; credential redaction now happens on the export copy.
 - Added explicit client-storage truncation/error records and included runtime issues in the `known-gaps` verdict.
-- Narrowed fallback attachment for ordinary workers/iframes to URLs actually observed from the captured page while retaining same-origin Shared Worker/Service Worker coverage.
+- Narrowed fallback attachment for workers, Shared Workers, Service Workers, and iframes to URLs actually observed from the captured page.
+- Refreshes observed resource and Service Worker script URLs during capture; explicitly rejects Targets carrying another tab ID even when URL matches.
+- Captures each input event immediately (without recording field values), avoiding loss of the last input during stop.
+- Redacts text MIME bodies even when CDP supplied them as base64, then re-encodes them without changing the archive representation.
 - Added idempotent content-script injection so capture can start on an already-open page.
 - Added click-operable popup flow plus `Ctrl+Shift+Y` command/page bridge.
 - Preserved JSON-string storage structure while redacting sensitive field values only in the exported copy.
@@ -37,6 +41,7 @@ The extension now completes real start/stop/export flows in macOS Chrome 151. A 
 - `npm test`: passed manifest/API baseline, syntax, integrity, ZIP, and smoke checks.
 - `git diff --check`: passed.
 - Post-review regressions passed for scoped child targets, raw-to-export request/body/storage redaction, storage truncation accounting, runtime-issue verdicts, redirect handling, and stop-time event draining.
+- Final-review regressions passed for cross-tab rejection and base64 JSON redaction; key Target discovery failures are now explicit completeness issues rather than silent empty results.
 - Real Chrome 151 popup automation: actual toolbar icon → start → interactions → stop → ZIP download completed.
 - `WebCaptrue_20260823_151111.zip`: ZIP integrity passed; size 3.5 MB.
 - Shared Worker evidence: `shared-worker.js` attached via scoped `targetId`; `from=shared-worker` request, 200 response, and JSON response body all present.

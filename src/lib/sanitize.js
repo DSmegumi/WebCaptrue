@@ -79,6 +79,35 @@
     return sourceText(text, audit, path);
   }
 
+  function isTextMime(contentType) {
+    return /^(?:text\/)|(?:json|javascript|xml|html|svg|x-www-form-urlencoded)/i.test(String(contentType || ""));
+  }
+
+  function decodeBase64Text(value) {
+    var binary = atob(String(value || ""));
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  }
+
+  function encodeBase64Text(value) {
+    var bytes = new TextEncoder().encode(String(value || ""));
+    var binary = "";
+    for (var i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+  }
+
+  function base64Payload(data, audit, path) {
+    if (!data || !data.base64Encoded || !isTextMime(data.mimeType)) return;
+    try {
+      var decoded = decodeBase64Text(data.body);
+      var sanitized = payloadText(decoded, data.mimeType, audit, path);
+      data.body = encodeBase64Text(sanitized);
+    } catch (_) {
+      note(audit, "base64-text-redaction-failed", path);
+    }
+  }
+
   function redactCookieRecords(data, audit, path) {
     (data.associatedCookies || []).forEach(function (item, index) {
       if (item.cookie && Object.prototype.hasOwnProperty.call(item.cookie, "value")) {
@@ -203,10 +232,16 @@
       }
       if ((copy.type === "response" || copy.type === "requestExtraInfo" || copy.type === "responseExtraInfo") && copy.data) copy.data.headers = headers(copy.data.headers, audit, dataPath + ".headers");
       if (copy.type === "requestExtraInfo" && copy.data) redactCookieRecords(copy.data, audit, dataPath);
-      if (copy.type === "responseBody" && copy.data && !copy.data.base64Encoded) copy.data.body = payloadText(copy.data.body, copy.data.mimeType, audit, dataPath + ".body");
+      if (copy.type === "responseBody" && copy.data) {
+        if (copy.data.base64Encoded) base64Payload(copy.data, audit, dataPath + ".body");
+        else copy.data.body = payloadText(copy.data.body, copy.data.mimeType, audit, dataPath + ".body");
+      }
       if (copy.type === "clientStorageSnapshot" && copy.data && copy.data.snapshot) copy.data.snapshot = structuredValue(copy.data.snapshot, "", audit, dataPath + ".snapshot");
       if (copy.type === "scriptSource" && copy.data) copy.data.source = sourceText(copy.data.source, audit, "$[" + index + "].data.source");
-      if (copy.type === "preloadedResource" && copy.data && !copy.data.base64Encoded) copy.data.body = payloadText(copy.data.body, copy.data.mimeType, audit, "$[" + index + "].data.body");
+      if (copy.type === "preloadedResource" && copy.data) {
+        if (copy.data.base64Encoded) base64Payload(copy.data, audit, dataPath + ".body");
+        else copy.data.body = payloadText(copy.data.body, copy.data.mimeType, audit, dataPath + ".body");
+      }
       if (copy.type === "domSnapshot" && copy.data) copy.data.html = html(copy.data.html, audit, "$[" + index + "].data.html");
       if (copy.type === "domStructuredSnapshot" && copy.data) copy.data.snapshot = domSnapshot(copy.data.snapshot, audit, "$[" + index + "].data.snapshot");
       return copy;

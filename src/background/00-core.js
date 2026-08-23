@@ -9,6 +9,8 @@ var SETTINGS_KEY = "webcatrueSettings";
 var db = new WebCaptrueDB();
 var requestMap = new Map();
 var requestGenerations = new Map();
+var requestExtraGenerations = new Map();
+var responseExtraGenerations = new Map();
 var capturedTargets = new Map();
 var capturedSessions = new Map();
 var targetInfoMap = new Map();
@@ -25,6 +27,11 @@ var lastInteraction = null;
 var lastScreenshotAt = 0;
 var persistTimer = null;
 var pendingDebuggerEvents = new Set();
+var pendingRecordWrites = new Set();
+var debuggerEventQueues = new Map();
+var lastDebuggerEventAt = 0;
+var lastTargetScopeRefreshAt = 0;
+var targetDiscoveryFailureCodes = new Set();
 
 var state = freshState();
 
@@ -35,6 +42,7 @@ function freshCounters() {
 function freshState() {
   return {
     active: false,
+    stopping: false,
     sessionId: null,
     tabId: null,
     startedAt: null,
@@ -205,7 +213,7 @@ function markCompletenessIssue(code, detail) {
 
 function addRecord(type, data) {
   if (!state.sessionId) return Promise.resolve();
-  return db.add({
+  var write = db.add({
     sessionId: state.sessionId,
     type: type,
     capturedAt: new Date().toISOString(),
@@ -214,7 +222,11 @@ function addRecord(type, data) {
     if (!state.completeness) state.completeness = freshState().completeness;
     state.completeness.recordWriteFailures += 1;
     markCompletenessIssue("record-write-failed", { type: type, reason: error && error.message || String(error) });
+  }).finally(function () {
+    pendingRecordWrites.delete(write);
   });
+  pendingRecordWrites.add(write);
+  return write;
 }
 
 function isApiType(type) {
@@ -261,6 +273,13 @@ function requestKey(source, requestId) {
   return base + (generation ? "#redirect-" + generation : "");
 }
 
+function sequentialRequestKey(source, requestId, counters) {
+  var base = requestBaseKey(source, requestId);
+  var generation = counters.get(base) || 0;
+  counters.set(base, generation + 1);
+  return base + (generation ? "#redirect-" + generation : "");
+}
+
 function advanceRequestGeneration(source, requestId) {
   var base = requestBaseKey(source, requestId);
   requestGenerations.set(base, (requestGenerations.get(base) || 0) + 1);
@@ -275,6 +294,34 @@ async function waitForPendingDebuggerEvents() {
   if (pendingDebuggerEvents.size) {
     markCompletenessIssue("debugger-event-drain-timeout", { pending: pendingDebuggerEvents.size });
     await addRecord("eventDrainTimeout", { pending: pendingDebuggerEvents.size });
+  }
+}
+
+async function waitForPendingRecordWrites() {
+  var deadline = Date.now() + 15000;
+  while (pendingRecordWrites.size && Date.now() < deadline) {
+    await Promise.all(Array.from(pendingRecordWrites).map(function (promise) { return promise.catch(function () {}); }));
+  }
+  if (pendingRecordWrites.size) markCompletenessIssue("record-write-drain-timeout", { pending: pendingRecordWrites.size });
+}
+
+async function waitForDebuggerQuiet() {
+  var deadline = Date.now() + 1000;
+  while (Date.now() < deadline && Date.now() - lastDebuggerEventAt < 100) {
+    await new Promise(function (resolve) { setTimeout(resolve, 25); });
+  }
+}
+
+async function stopTargetPolling() {
+  if (targetPollTimer) clearTimeout(targetPollTimer);
+  targetPollTimer = null;
+  var deadline = Date.now() + 5000;
+  while (targetPollRunning && Date.now() < deadline) {
+    await new Promise(function (resolve) { setTimeout(resolve, 25); });
+  }
+  if (targetPollRunning) {
+    markCompletenessIssue("target-poll-drain-timeout", {});
+    await addRecord("targetDiscoveryFailed", { phase: "stop", reason: "target polling did not drain before detach" });
   }
 }
 
@@ -337,6 +384,31 @@ function rememberAllowedTargetUrl(url) {
   } catch (_) {}
 }
 
+async function discoveryCommand(debuggee, method, params) {
+  try {
+    return await command(debuggee, method, params);
+  } catch (error) {
+    var code = "target-discovery-command-failed:" + method;
+    if (!targetDiscoveryFailureCodes.has(code)) {
+      targetDiscoveryFailureCodes.add(code);
+      markCompletenessIssue("target-discovery-command-failed", { method: method, reason: error.message || String(error) });
+      await addRecord("targetDiscoveryFailed", { method: method, reason: error.message || String(error) });
+    }
+    return null;
+  }
+}
+
+async function refreshAllowedTargetUrls(root, force) {
+  if (!force && Date.now() - lastTargetScopeRefreshAt < 1000) return;
+  lastTargetScopeRefreshAt = Date.now();
+  var observedTargets = await discoveryCommand(root, "Runtime.evaluate", {
+    expression: "Promise.all([Promise.resolve(performance.getEntriesByType('resource').map(function(e){return e.name;})), navigator.serviceWorker && navigator.serviceWorker.getRegistrations ? navigator.serviceWorker.getRegistrations().then(function(rs){return rs.reduce(function(out,r){['active','waiting','installing'].forEach(function(k){if(r[k]&&r[k].scriptURL)out.push(r[k].scriptURL);});return out;},[]);}) : Promise.resolve([])]).then(function(x){return x[0].concat(x[1]);})",
+    returnByValue: true,
+    awaitPromise: true
+  });
+  (((observedTargets || {}).result || {}).value || []).forEach(rememberAllowedTargetUrl);
+}
+
 function targetRelatedToRoot(info) {
   if (!info || !rootTargetId || info.targetId === rootTargetId) return false;
   if (info.parentFrameId && rootFrameIds.has(info.parentFrameId)) return true;
@@ -358,7 +430,7 @@ function capturableTargetType(type) {
 
 async function attachRelatedTarget(rawInfo, fallbackRelated) {
   var info = WebCaptrueTargets.normalize(rawInfo);
-  if (!state.active || !info || !info.targetId || capturedTargets.has(info.targetId) || capturedSessionHasTarget(info.targetId)) return;
+  if (!state.active || state.stopping || !info || !info.targetId || capturedTargets.has(info.targetId) || capturedSessionHasTarget(info.targetId)) return;
   if (!capturableTargetType(info.type) || (!fallbackRelated && !targetRelatedToRoot(info))) return;
   var debuggee = { targetId: info.targetId };
   try {
@@ -389,7 +461,7 @@ async function enableFlatAutoAttach(debuggee) {
 async function attachFlatSession(source, params) {
   var info = WebCaptrueTargets.normalize(params && params.targetInfo);
   var sessionId = params && params.sessionId;
-  if (!sessionId || !info.targetId || capturedSessions.has(sessionId)) return;
+  if (state.stopping || !sessionId || !info.targetId || capturedSessions.has(sessionId)) return;
   capturedSessions.set(sessionId, info);
   targetInfoMap.set(info.targetId, info);
   state.completeness.targetCandidates += 1;
@@ -411,7 +483,7 @@ async function attachFlatSession(source, params) {
 
 async function attachExistingFlatTarget(rawInfo) {
   var info = WebCaptrueTargets.normalize(rawInfo);
-  if (!state.active || !info.targetId || capturedSessionHasTarget(info.targetId)) return;
+  if (!state.active || state.stopping || !info.targetId || capturedSessionHasTarget(info.targetId)) return;
   if (!WebCaptrueTargets.isFallbackCandidate(info, {
     rootTargetId: rootTargetId,
     rootTabId: state.tabId,
@@ -431,10 +503,11 @@ async function attachExistingFlatTarget(rawInfo) {
 }
 
 async function pollLegacyTargets() {
-  if (!state.active || targetPollRunning) return;
+  if (!state.active || state.stopping || targetPollRunning) return;
   targetPollRunning = true;
   try {
     state.completeness.targetScans += 1;
+    await refreshAllowedTargetUrls({ tabId: state.tabId }, false);
     var newlySeen = [];
     if (flatSessionsSupported) {
       var protocolResult = await tryCommand({ tabId: state.tabId }, "Target.getTargets");
@@ -496,7 +569,7 @@ async function pollLegacyTargets() {
     markCompletenessIssue("target-poll-failed", { reason: error.message || String(error) });
   } finally {
     targetPollRunning = false;
-    if (state.active) targetPollTimer = setTimeout(pollLegacyTargets, 250);
+    if (state.active && !state.stopping) targetPollTimer = setTimeout(pollLegacyTargets, 250);
   }
 }
 
@@ -515,7 +588,7 @@ async function discoverRelatedTargets() {
     }
   }
   var root = { tabId: state.tabId };
-  var frameTree = await tryCommand(root, "Page.getFrameTree");
+  var frameTree = await discoveryCommand(root, "Page.getFrameTree");
   rootFrameIds.clear();
   allowedTargetOrigins.clear();
   allowedTargetUrls.clear();
@@ -528,14 +601,9 @@ async function discoverRelatedTargets() {
     (node.resources || []).forEach(function (resource) { rememberAllowedTargetUrl(resource.url); });
     (node.childFrames || []).forEach(collectFrames);
   }(frameTree && frameTree.frameTree));
-  var observedTargets = await tryCommand(root, "Runtime.evaluate", {
-    expression: "Promise.all([Promise.resolve(performance.getEntriesByType('resource').map(function(e){return e.name;})), navigator.serviceWorker && navigator.serviceWorker.getRegistrations ? navigator.serviceWorker.getRegistrations().then(function(rs){return rs.map(function(r){return r.active&&r.active.scriptURL||r.waiting&&r.waiting.scriptURL||r.installing&&r.installing.scriptURL||'';});}) : Promise.resolve([])]).then(function(x){return x[0].concat(x[1]);})",
-    returnByValue: true,
-    awaitPromise: true
-  });
-  (((observedTargets || {}).result || {}).value || []).forEach(rememberAllowedTargetUrl);
-  await tryCommand(root, "Target.setDiscoverTargets", { discover: true });
-  var result = await tryCommand(root, "Target.getTargets");
+  await refreshAllowedTargetUrls(root, true);
+  await discoveryCommand(root, "Target.setDiscoverTargets", { discover: true });
+  var result = await discoveryCommand(root, "Target.getTargets");
   var infos = result && result.targetInfos || [];
   infos.forEach(function (info) { targetInfoMap.set(info.targetId, info); });
   for (var j = 0; j < infos.length; j += 1) await attachRelatedTarget(infos[j]);
@@ -559,9 +627,5 @@ async function detachChildTargets() {
     var key = sourceKey(debuggee);
     expectedDetachKeys.add(key);
     await debuggerDetach(debuggee);
-    expectedDetachKeys.delete(key);
   }
-  capturedTargets.clear();
-  capturedSessions.clear();
-  updateTargetCounter();
 }
