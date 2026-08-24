@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "WebCaptrue",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "One-click offline web capture for later AI-assisted analysis. Chrome 109+ compatible.",
   "minimum_chrome_version": "109",
   "permissions": [

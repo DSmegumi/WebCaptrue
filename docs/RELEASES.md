@@ -21,31 +21,32 @@ WebCaptrue 的浏览器安装包使用 GitHub **Releases** 发布，而不是 Gi
 OneDrive/WebCaptrue/Signing Keys/WebCaptrue-signing-key.pem
 ```
 
-已经签名、准备发布的 CRX 暂存在：
+已经签名、准备发布的 CRX 先保存在 OneDrive 的私有工作目录：
 
 ```text
 OneDrive/WebCaptrue/Releases/X.Y.Z/WebCaptrue-X.Y.Z.crx
 ```
 
-暂存 CRX 可以创建匿名只读下载链接，因为该文件本身就是准备公开发布的安装资产；私钥目录不得创建匿名分享链接。
+签名完成并通过本地校验后，将最终 CRX 复制到仓库的 `release-assets/` 目录。私钥目录不得创建分享链接，也不得进入仓库。
 
 ## GitHub 发布描述文件
 
-GitHub 仓库只保存每个版本的发布描述文件：
+GitHub 仓库保存每个版本的发布描述文件和对应的已签名 CRX：
 
 ```text
 release-assets/X.Y.Z.json
+release-assets/WebCaptrue-X.Y.Z.crx
 ```
 
 其中记录：
 
 - 版本号
 - CRX 文件名
-- OneDrive 暂存文件的公开下载链接
+- 仓库内已签名 CRX 的相对路径
 - 预期 SHA-256
 - 预期文件大小
 
-这样可以避免通过 GitHub 文本型连接器直接写二进制文件造成截断，同时让 Actions 对下载内容进行严格校验。
+二进制文件必须通过本地 Git 提交并在提交前核对哈希，不能通过文本型连接器写入。Actions 会再次校验大小、哈希和 CRX3 结构。
 
 ## 自动发布
 
@@ -55,7 +56,7 @@ release-assets/X.Y.Z.json
 
 1. 从 `manifest.json` 读取版本号。
 2. 读取 `release-assets/X.Y.Z.json`。
-3. 从 OneDrive 暂存地址下载签名 CRX。
+3. 从仓库的 `release-assets/` 目录暂存签名 CRX。
 4. 核对文件大小。
 5. 核对 SHA-256。
 6. 校验 `Cr24` magic 和 CRX3 版本字段。
@@ -71,10 +72,10 @@ release-assets/X.Y.Z.json
 2. 更新 `manifest.json` 中的 `version`。
 3. 使用 OneDrive 中固定的 WebCaptrue 签名私钥生成同版本 CRX。
 4. 将签名 CRX上传到 `OneDrive/WebCaptrue/Releases/X.Y.Z/`。
-5. 为该 CRX 创建匿名只读下载链接。
+5. 将 CRX 复制到 `release-assets/WebCaptrue-X.Y.Z.crx`。
 6. 计算并确认 CRX SHA-256 和文件大小。
-7. 新建/更新 `release-assets/X.Y.Z.json`。
-8. 提交到 `main`。
+7. 新建/更新 `release-assets/X.Y.Z.json`，用 `sourcePath` 指向该 CRX。
+8. 通过本地 Git 同时提交描述文件和二进制文件到 `main`。
 9. GitHub Actions 自动创建或更新对应 Release。
 
 固定使用同一签名私钥可以保持 Chrome 扩展 ID 不变，从而使后续版本被识别为同一个扩展。

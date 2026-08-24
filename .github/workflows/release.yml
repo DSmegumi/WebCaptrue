@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "release-assets/*.json"
+      - "release-assets/*.crx"
       - "manifest.json"
   workflow_dispatch:
 
@@ -30,26 +31,30 @@ jobs:
           TAG="v${VERSION}"
           DESCRIPTOR="release-assets/${VERSION}.json"
           test -f "$DESCRIPTOR" || { echo "::error::Missing release descriptor: $DESCRIPTOR"; exit 1; }
+          DESCRIPTOR_VERSION="$(node -p "require('./${DESCRIPTOR}').version")"
           FILE_NAME="$(node -p "require('./${DESCRIPTOR}').fileName")"
-          DOWNLOAD_URL="$(node -p "require('./${DESCRIPTOR}').downloadUrl")"
+          SOURCE_PATH="$(node -p "require('./${DESCRIPTOR}').sourcePath")"
           EXPECTED_SHA="$(node -p "require('./${DESCRIPTOR}').sha256")"
           EXPECTED_SIZE="$(node -p "require('./${DESCRIPTOR}').size")"
-          test -n "$FILE_NAME" && test -n "$DOWNLOAD_URL" && test -n "$EXPECTED_SHA" && test -n "$EXPECTED_SIZE"
+          test "$DESCRIPTOR_VERSION" = "$VERSION" || { echo "::error::Descriptor version mismatch: expected $VERSION, got $DESCRIPTOR_VERSION"; exit 1; }
+          test -n "$FILE_NAME" && test -n "$SOURCE_PATH" && test -n "$EXPECTED_SHA" && test -n "$EXPECTED_SIZE"
+          test "$SOURCE_PATH" = "release-assets/$FILE_NAME" || { echo "::error::Unexpected CRX source path: $SOURCE_PATH"; exit 1; }
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "file_name=$FILE_NAME" >> "$GITHUB_OUTPUT"
-          echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
+          echo "source_path=$SOURCE_PATH" >> "$GITHUB_OUTPUT"
           echo "expected_sha=$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
           echo "expected_size=$EXPECTED_SIZE" >> "$GITHUB_OUTPUT"
 
-      - name: Download signed CRX staging asset
+      - name: Stage signed CRX from repository
         shell: bash
         env:
-          DOWNLOAD_URL: ${{ steps.meta.outputs.download_url }}
+          SOURCE_PATH: ${{ steps.meta.outputs.source_path }}
           FILE_NAME: ${{ steps.meta.outputs.file_name }}
         run: |
           set -euo pipefail
-          curl --fail --location --retry 3 --retry-delay 2 --output "$FILE_NAME" "$DOWNLOAD_URL"
+          test -f "$SOURCE_PATH" || { echo "::error::Missing signed CRX: $SOURCE_PATH"; exit 1; }
+          cp "$SOURCE_PATH" "$FILE_NAME"
           test -s "$FILE_NAME"
 
       - name: Verify size and SHA-256

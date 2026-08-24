@@ -10,7 +10,7 @@ Protect capture completeness and structural fidelity first, then apply auditable
 
 ## Current State
 
-The extension now completes real start/stop/export flows in macOS Chrome 151. A local E2E fixture exercises page, iframe, cross-origin iframe, Dedicated Worker, pre-existing Shared Worker, Service Worker, Fetch, WebSocket, SSE, DOM, storage, screenshots, interaction, and exception paths. The latest safe-attribution export reports the unresolved browser evidence as `known-gaps` instead of mis-associating it. The hard Windows 7 / Chrome 109 acceptance gate remains untested.
+The extension now completes real start/stop/export flows in macOS Chrome 151. A local E2E fixture exercises page, iframe, cross-origin iframe, Dedicated Worker, pre-existing Shared Worker, Service Worker, Fetch, WebSocket, SSE, DOM, storage, screenshots, interaction, and exception paths. The latest safe-attribution export reports the unresolved browser evidence as `known-gaps` instead of mis-associating it. Version 0.2.1 is signed from the current source with the existing key; its repository-contained release asset replaces the unreliable OneDrive anonymous-download staging path. The hard Windows 7 / Chrome 109 acceptance gate remains untested.
 
 ## Completed Work
 
@@ -36,6 +36,7 @@ The extension now completes real start/stop/export flows in macOS Chrome 151. A 
 - Removed large payload duplication from `timeline.jsonl`; the equivalent data remains in its canonical archive directory.
 - Added a persistent two-origin E2E fixture covering Fetch GET/POST, iframe/OOPIF, Dedicated/Shared/Service Worker, WebSocket, SSE, IndexedDB, Cache Storage, SPA navigation, and exceptions.
 - Added integrity regression tests for Chrome 109 routing, target scoping, redirect/drain implementation markers, raw-to-export network/storage redaction, SSE completeness, exclusions, source-code structural redaction, and structured DOM password redaction.
+- Rebuilt the signed CRX as 0.2.1 from the current runtime files, verified its ZIP contents byte-for-byte against the packaging directory, and changed Release automation to verify a repository-contained signed asset instead of an expiring OneDrive URL.
 
 ## Validation Status
 
@@ -43,6 +44,7 @@ The extension now completes real start/stop/export flows in macOS Chrome 151. A 
 
 - `npm test`: passed manifest/API baseline, syntax, integrity, ZIP, and smoke checks.
 - `git diff --check`: passed.
+- `WebCaptrue-0.2.1.crx`: CRX3/ZIP integrity passed; 38,964 bytes; SHA-256 `f6faf5f8759d7fca6544b014b61c768c42c383c442872e65ebf1f0cbdc3b1462`; extracted files matched the packaging directory.
 - Post-review regressions passed for scoped child targets, raw-to-export request/body/storage redaction, storage truncation accounting, runtime-issue verdicts, redirect handling, and stop-time event draining.
 - Final-review regressions passed for cross-tab rejection and base64 JSON redaction; key Target discovery failures are now explicit completeness issues rather than silent empty results.
 - Real Chrome 151 popup automation: actual toolbar icon → start → interactions → stop → ZIP download completed.
@@ -70,6 +72,7 @@ The extension now completes real start/stop/export flows in macOS Chrome 151. A 
 - Capture limits are now explicit per item, but a total long-session byte budget and stress acceptance are still pending.
 - Screenshots are intentionally preserved as captured pixels and may display business-sensitive text; they are not OCR-redacted.
 - The current-Chrome test proves the modern flat-session path plus scoped Shared Worker fallback, not Chrome 109 runtime behavior.
+- GitHub Release v0.2.1 publication remains pending until the release commit is pushed and Actions completes.
 
 ## Next Action
 
