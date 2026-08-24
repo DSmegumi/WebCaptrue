@@ -301,7 +301,7 @@ chrome.debugger.onEvent.addListener(function (source, method, params) {
 chrome.debugger.onDetach.addListener(function (source, reason) {
   var key = sourceKey(source);
   if (expectedDetachKeys.has(key)) return;
-  if (source.sessionId && capturedSessions.has(source.sessionId)) {
+  if (source.sessionId) {
     var sessionInfo = capturedSessions.get(source.sessionId) || {};
     capturedSessions.delete(source.sessionId);
     updateTargetCounter();
