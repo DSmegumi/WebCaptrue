@@ -45,6 +45,7 @@ The extension now completes real start/stop/export flows in macOS Chrome 151. A 
 - `npm test`: passed manifest/API baseline, syntax, integrity, ZIP, and smoke checks.
 - `git diff --check`: passed.
 - `WebCaptrue-0.2.1.crx`: CRX3/ZIP integrity passed; 38,964 bytes; SHA-256 `f6faf5f8759d7fca6544b014b61c768c42c383c442872e65ebf1f0cbdc3b1462`; extracted files matched the packaging directory.
+- GitHub `validate #21` and `Release CRX #4` passed for commit `89723f3`; Release `v0.2.1` points to that commit and publishes the same verified CRX digest.
 - Post-review regressions passed for scoped child targets, raw-to-export request/body/storage redaction, storage truncation accounting, runtime-issue verdicts, redirect handling, and stop-time event draining.
 - Final-review regressions passed for cross-tab rejection and base64 JSON redaction; key Target discovery failures are now explicit completeness issues rather than silent empty results.
 - Real Chrome 151 popup automation: actual toolbar icon → start → interactions → stop → ZIP download completed.
@@ -72,7 +73,6 @@ The extension now completes real start/stop/export flows in macOS Chrome 151. A 
 - Capture limits are now explicit per item, but a total long-session byte budget and stress acceptance are still pending.
 - Screenshots are intentionally preserved as captured pixels and may display business-sensitive text; they are not OCR-redacted.
 - The current-Chrome test proves the modern flat-session path plus scoped Shared Worker fallback, not Chrome 109 runtime behavior.
-- GitHub Release v0.2.1 publication remains pending until the release commit is pushed and Actions completes.
 
 ## Next Action
 
