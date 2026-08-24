@@ -26,7 +26,7 @@ const offscreen = ["src/offscreen.js", "src/offscreen/00-analysis.js", "src/offs
 for (const marker of ["Target.setDiscoverTargets", "targetId", "captureFullPageScreenshot", "interactionId", "requestKey", "params.redirectResponse", "flushAllExtraInfo", "waitForPendingDebuggerEvents", "waitForPendingRecordWrites", "stopTargetPolling"]) {
   if (!background.includes(marker)) throw new Error(`background capture marker missing: ${marker}`);
 }
-for (const marker of ["diagnosticLog", "capture-started", "initial-capture-completed", "stop-requested", "debugger-events-drained", "export-requested", "message-command-failed"]) {
+for (const marker of ["diagnosticLog", "MAX_DIAGNOSTIC_LOG_ENTRIES", "diagnostic-log-capture-truncated", "capture-started", "initial-capture-completed", "stop-requested", "debugger-events-drained", "export-requested", "message-command-failed", "exportInterruptedSession", "service-worker-restarted", "interrupted-session"]) {
   if (!background.includes(marker)) throw new Error(`diagnostic lifecycle marker missing: ${marker}`);
 }
 for (const marker of ["indexedDB.databases", "dumpCacheStorage", "REQUEST_CLIENT_STORAGE"]) {

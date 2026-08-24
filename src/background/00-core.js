@@ -3,6 +3,9 @@
 var PROTOCOL_VERSION = "1.3";
 var MAX_BODY_BYTES = 5 * 1024 * 1024;
 var MAX_SCRIPT_BYTES = 2 * 1024 * 1024;
+var MAX_DIAGNOSTIC_LOG_ENTRIES = 2000;
+var MAX_DIAGNOSTIC_LOG_BYTES = 2 * 1024 * 1024;
+var MAX_DIAGNOSTIC_DETAIL_BYTES = 16 * 1024;
 var CORRELATION_WINDOW_MS = 10000;
 var STATE_KEY = "webcaptrueRuntimeState";
 var SETTINGS_KEY = "webcatrueSettings";
@@ -38,6 +41,7 @@ var debuggerEventQueues = new Map();
 var lastDebuggerEventAt = 0;
 var lastTargetScopeRefreshAt = 0;
 var targetDiscoveryFailureCodes = new Set();
+var interruptedExportPromise = null;
 
 var state = freshState();
 
@@ -49,11 +53,13 @@ function freshState() {
   return {
     active: false,
     stopping: false,
+    recoverable: false,
     sessionId: null,
     tabId: null,
     startedAt: null,
     url: null,
     title: null,
+    environment: null,
     options: { captureBodies: true, autoScreenshots: true, captureClientStorage: true },
     counters: freshCounters(),
     completeness: {
@@ -64,6 +70,7 @@ function freshState() {
       recordWriteFailures: 0,
       issues: []
     },
+    diagnostics: { recorded: 0, bytes: 0, dropped: 0, truncatedDetails: 0, truncationReported: false },
     lastError: null
   };
 }
@@ -236,12 +243,49 @@ function addRecord(type, data) {
 }
 
 function diagnosticLog(level, component, event, detail) {
+  if (!state.sessionId) return Promise.resolve();
+  if (!state.diagnostics) state.diagnostics = freshState().diagnostics;
+  var safeDetail = detail || {};
+  var detailBytes = 0;
+  try { detailBytes = new TextEncoder().encode(JSON.stringify(safeDetail)).length; } catch (_) {
+    safeDetail = { truncated: true, reason: "diagnostic detail was not serializable" };
+    detailBytes = 0;
+    state.diagnostics.truncatedDetails += 1;
+  }
+  if (detailBytes > MAX_DIAGNOSTIC_DETAIL_BYTES) {
+    safeDetail = { truncated: true, originalBytes: detailBytes, reason: "diagnostic detail exceeds per-entry limit" };
+    state.diagnostics.truncatedDetails += 1;
+    detailBytes = new TextEncoder().encode(JSON.stringify(safeDetail)).length;
+  }
+  var estimatedBytes = detailBytes + String(component || "").length + String(event || "").length + 128;
+  if (state.diagnostics.recorded >= MAX_DIAGNOSTIC_LOG_ENTRIES || state.diagnostics.bytes + estimatedBytes > MAX_DIAGNOSTIC_LOG_BYTES) {
+    state.diagnostics.dropped += 1;
+    if (!state.diagnostics.truncationReported) {
+      state.diagnostics.truncationReported = true;
+      markCompletenessIssue("diagnostic-log-capture-truncated", {
+        maxEntries: MAX_DIAGNOSTIC_LOG_ENTRIES,
+        maxBytes: MAX_DIAGNOSTIC_LOG_BYTES,
+        maxDetailBytes: MAX_DIAGNOSTIC_DETAIL_BYTES
+      });
+    }
+    return Promise.resolve();
+  }
+  state.diagnostics.recorded += 1;
+  state.diagnostics.bytes += estimatedBytes;
   return addRecord("diagnosticLog", {
     level: level || "info",
     component: component || "extension",
     event: event || "diagnostic",
-    detail: detail || {}
+    detail: safeDetail
   });
+}
+
+function errorDiagnostic(error) {
+  return {
+    name: error && error.name || "Error",
+    message: error && error.message || String(error || "Unknown error"),
+    stack: error && typeof error.stack === "string" ? error.stack : ""
+  };
 }
 
 function isApiType(type) {

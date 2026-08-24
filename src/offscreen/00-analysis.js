@@ -289,17 +289,38 @@ function operatingSystemFromUserAgent(userAgent, platform) {
   return String(platform || "unknown");
 }
 
-function buildDiagnostics(meta, records) {
-  var errorTypes = ["targetAttachFailed", "targetAutoAttachFailed", "captureDomainEnableFailed", "contentScriptInjectionFailed", "clientStorageSnapshotSkipped", "captureError", "eventHandlingFailed", "debuggerDetached", "tabClosed", "eventDrainTimeout", "targetDiscoveryFailed"];
+function buildDiagnostics(meta, records, requestedLimits) {
+  var errorTypes = ["targetAttachFailed", "targetAutoAttachFailed", "captureDomainEnableFailed", "contentScriptInjectionFailed", "clientStorageSnapshotSkipped", "captureError", "eventHandlingFailed", "debuggerDetached", "tabClosed", "sessionInterrupted", "eventDrainTimeout", "targetDiscoveryFailed"];
   var warningTypes = ["responseBodySkipped", "preloadedResourceSkipped", "scriptSourceSkipped", "fullPageScreenshotFallback", "clientStorageTruncation", "responseBodyUnavailableGap", "targetAttributionGap", "extraInfoAssociationGap", "targetDiscoveryFallback"];
+  var limits = Object.assign({ maxEntries: 5000, maxBytes: 2 * 1024 * 1024, maxDetailBytes: 16 * 1024 }, requestedLimits || {});
   var entries = [];
+  var totalBytes = 0;
+  var captureDiagnostics = (meta || {}).diagnostics || {};
+  var truncation = { droppedEntries: captureDiagnostics.dropped || 0, truncatedDetails: captureDiagnostics.truncatedDetails || 0, limits: limits };
   var sessionStart = (records || []).find(function (record) { return record.type === "sessionStart"; });
-  var recordedEnvironment = sessionStart && sessionStart.data && sessionStart.data.environment || {};
+  var recordedEnvironment = sessionStart && sessionStart.data && sessionStart.data.environment || (meta || {}).environment || {};
   var completenessState = (meta || {}).completeness || {};
+  function jsonBytes(value) {
+    try { return new TextEncoder().encode(JSON.stringify(value)).length; } catch (_) { return 0; }
+  }
+  function appendEntry(entry) {
+    var detailBytes = jsonBytes(entry.detail);
+    if (detailBytes > limits.maxDetailBytes) {
+      entry.detail = { truncated: true, originalBytes: detailBytes, reason: "diagnostic detail exceeds per-entry limit" };
+      truncation.truncatedDetails += 1;
+    }
+    var entryBytes = jsonBytes(entry);
+    if (entries.length >= limits.maxEntries || totalBytes + entryBytes > limits.maxBytes) {
+      truncation.droppedEntries += 1;
+      return;
+    }
+    entries.push(entry);
+    totalBytes += entryBytes;
+  }
   (records || []).forEach(function (record) {
     var data = record.data || {};
     if (record.type === "diagnosticLog") {
-      entries.push({
+      appendEntry({
         at: record.capturedAt || data.at || "",
         level: data.level || "info",
         component: data.component || "extension",
@@ -307,7 +328,7 @@ function buildDiagnostics(meta, records) {
         detail: data.detail || {}
       });
     } else if (errorTypes.indexOf(record.type) >= 0 || warningTypes.indexOf(record.type) >= 0) {
-      entries.push({
+      appendEntry({
         at: record.capturedAt || "",
         level: errorTypes.indexOf(record.type) >= 0 ? "error" : "warning",
         component: "capture",
@@ -317,7 +338,7 @@ function buildDiagnostics(meta, records) {
     }
   });
   (((meta || {}).completeness || {}).issues || []).forEach(function (issue) {
-    entries.push({
+    appendEntry({
       at: issue.at || "",
       level: "warning",
       component: "completeness",
@@ -326,6 +347,19 @@ function buildDiagnostics(meta, records) {
     });
   });
   entries.sort(function (a, b) { return String(a.at).localeCompare(String(b.at)); });
+  if (truncation.droppedEntries || truncation.truncatedDetails) {
+    if (entries.length >= limits.maxEntries && entries.length) {
+      entries.pop();
+      truncation.droppedEntries += 1;
+    }
+    entries.push({
+      at: new Date().toISOString(),
+      level: "warning",
+      component: "diagnostics",
+      event: "diagnostic-log-truncated",
+      detail: truncation
+    });
+  }
   entries.forEach(function (entry, index) { entry.sequence = index + 1; });
   entries = entries.map(function (entry) {
     return { sequence: entry.sequence, at: entry.at, level: entry.level, component: entry.component, event: entry.event, detail: entry.detail };
@@ -342,6 +376,7 @@ function buildDiagnostics(meta, records) {
     format: "webcaptrue-diagnostics",
     version: 1,
     environment: environment,
+    truncation: truncation.droppedEntries || truncation.truncatedDetails ? truncation : null,
     entries: entries
   };
 }
@@ -395,7 +430,7 @@ function buildCompleteness(meta, records) {
 
   var completenessState = meta && meta.completeness || {};
   var failureRecords = [];
-  ["targetAttachFailed", "targetAutoAttachFailed", "captureDomainEnableFailed", "contentScriptInjectionFailed", "clientStorageSnapshotSkipped", "captureError", "eventHandlingFailed"].forEach(function (type) {
+  ["targetAttachFailed", "targetAutoAttachFailed", "captureDomainEnableFailed", "contentScriptInjectionFailed", "clientStorageSnapshotSkipped", "captureError", "eventHandlingFailed", "debuggerDetached", "tabClosed", "sessionInterrupted"].forEach(function (type) {
     (byType[type] || []).forEach(function (record) { failureRecords.push({ type: type, capturedAt: record.capturedAt, data: record.data }); });
   });
   var truncationRecords = [];

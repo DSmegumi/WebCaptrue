@@ -54,6 +54,8 @@ WebCaptrue 是一个面向内网、隔离网和受限办公环境的一键浏览
 - Chrome 109 Offscreen Document heartbeat
 - `integrity/completeness.json` 完整性结论及失败/截断/排除/脱敏审计
 - `diagnostics/environment.json` 与 `diagnostics/runtime-log.jsonl` 保存本机环境、采集生命周期、兼容性回退和错误日志
+- 调试器异常断开、采集标签页关闭或 Service Worker 重启时，自动导出带 `_interrupted` 后缀的部分采集 ZIP
+- 诊断日志设置条数、总字节和单条详情上限；任何截断都会进入完整性报告，不会静默丢弃
 - Chrome 125+ flat session 与 Chrome 109 `targetId` 回退
 - 对采集开始前已存在的 Shared Worker 进行同源范围补抓
 

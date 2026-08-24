@@ -115,6 +115,14 @@ assert.deepEqual(JSON.parse(JSON.stringify(diagnosticFailures.entries)), [
   { sequence: 1, at: "2026-08-24T01:00:01.000Z", level: "error", component: "capture", event: "captureError", detail: { operation: "dom-html-snapshot", reason: "denied" } },
   { sequence: 2, at: "2026-08-24T01:00:02.000Z", level: "warning", component: "completeness", event: "target-poll-failed", detail: { reason: "unsupported" } }
 ]);
+const boundedDiagnostics = context.buildDiagnostics({ completeness: { issues: [] } }, [
+  { type: "diagnosticLog", capturedAt: "2026-08-24T01:00:00.000Z", data: { event: "one" } },
+  { type: "diagnosticLog", capturedAt: "2026-08-24T01:00:01.000Z", data: { event: "two" } },
+  { type: "diagnosticLog", capturedAt: "2026-08-24T01:00:02.000Z", data: { event: "three" } }
+], { maxEntries: 2, maxBytes: 100000, maxDetailBytes: 1000 });
+assert.equal(boundedDiagnostics.entries.length, 2);
+assert.equal(boundedDiagnostics.entries[1].event, "diagnostic-log-truncated");
+assert.equal(boundedDiagnostics.truncation.droppedEntries, 2);
 const diagnosticEnvironment = context.buildDiagnostics({
   sessionId: "cap-1",
   startedAt: "2026-08-24T01:00:00.000Z",
@@ -136,6 +144,8 @@ assert.deepEqual(JSON.parse(JSON.stringify(diagnosticEnvironment.environment)), 
   targetMode: "targetId-poll",
   options: { captureBodies: true }
 });
+assert.equal(context.operatingSystemFromUserAgent("Mozilla/5.0 (Windows NT 6.1; Win64; x64) Chrome/109.0.5414.120", "Win32"), "Windows 7");
+assert.equal(context.browserVersionFromUserAgent("Mozilla/5.0 Chrome/109.0.5414.120 Safari/537.36"), "109.0.5414.120");
 const completeness = context.buildCompleteness({ completeness: { recordWriteFailures: 0, issues: [] } }, [
   { type: "request", data: { requestKey: "page|1", method: "GET", url: "https://app.example.test/api" } },
   { type: "targetAttachFailed", data: { targetId: "worker-1", type: "worker", reason: "attach failed" } },

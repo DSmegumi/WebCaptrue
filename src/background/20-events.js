@@ -309,20 +309,38 @@ chrome.debugger.onDetach.addListener(function (source, reason) {
     return;
   }
   if (state.active && !state.stopping && source.tabId === state.tabId) {
-    state.active = false;
     state.lastError = "Debugger detached: " + reason;
-    addRecord("debuggerDetached", { reason: reason });
+    addRecord("debuggerDetached", { reason: reason }).then(function () {
+      return exportInterruptedSession("debugger-detached:" + reason);
+    }).catch(function () {});
     schedulePersist();
   }
 });
 
 chrome.tabs.onRemoved.addListener(function (tabId) {
-  if (state.active && tabId === state.tabId) {
-    state.active = false;
+  if (state.active && !state.stopping && tabId === state.tabId) {
     state.lastError = "Captured tab was closed";
-    addRecord("tabClosed", {});
+    addRecord("tabClosed", {}).then(function () {
+      return exportInterruptedSession("captured-tab-closed");
+    }).catch(function () {});
     schedulePersist();
   }
+});
+
+self.addEventListener("error", function (event) {
+  if (!state.sessionId) return;
+  diagnosticLog("error", "service-worker", "unhandled-error", {
+    error: errorDiagnostic(event && event.error || new Error(event && event.message || "Unhandled service worker error")),
+    filename: event && event.filename || "",
+    line: event && event.lineno,
+    column: event && event.colno
+  });
+});
+
+self.addEventListener("unhandledrejection", function (event) {
+  if (!state.sessionId) return;
+  var reason = event && event.reason;
+  diagnosticLog("error", "service-worker", "unhandled-rejection", { error: errorDiagnostic(reason) });
 });
 
 chrome.commands.onCommand.addListener(function (commandName) {
@@ -397,7 +415,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     if (state.sessionId) {
       await diagnosticLog("error", "messaging", "message-command-failed", {
         messageType: message.type,
-        reason: error.message || String(error)
+        error: errorDiagnostic(error)
       });
     }
     sendResponse({ ok: false, error: error.message || String(error) });
@@ -411,8 +429,21 @@ chrome.runtime.onInstalled.addListener(function () {
   chrome.storage.local.set(defaults, function () { void chrome.runtime.lastError; });
 });
 
-chromeStorageGet([STATE_KEY]).then(function (saved) {
-  if (saved && saved[STATE_KEY] && !saved[STATE_KEY].active) state = saved[STATE_KEY];
-  if (state.active) state = freshState();
+chromeStorageGet([STATE_KEY]).then(async function (saved) {
+  var persisted = saved && saved[STATE_KEY];
+  if (persisted) state = persisted;
+  if (!state.diagnostics) state.diagnostics = freshState().diagnostics;
+  if (state.active || state.recoverable) {
+    state.active = false;
+    state.stopping = false;
+    state.recoverable = true;
+    state.lastError = "Service worker restarted during or after an unfinished capture";
+    markCompletenessIssue("service-worker-restarted", { recovery: "automatic interrupted-session export" });
+    await diagnosticLog("warning", "service-worker", "service-worker-restarted", {
+      recovery: "automatic interrupted-session export",
+      counters: state.counters
+    });
+    try { await exportInterruptedSession("service-worker-restarted"); } catch (_) {}
+  }
   schedulePersist();
 });

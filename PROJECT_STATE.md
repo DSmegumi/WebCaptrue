@@ -38,6 +38,7 @@ The extension now completes real start/stop/export flows in macOS Chrome 151. A 
 - Added integrity regression tests for Chrome 109 routing, target scoping, redirect/drain implementation markers, raw-to-export network/storage redaction, SSE completeness, exclusions, source-code structural redaction, and structured DOM password redaction.
 - Rebuilt the signed CRX as 0.2.1 from the current runtime files, verified its ZIP contents byte-for-byte against the packaging directory, and changed Release automation to verify a repository-contained signed asset instead of an expiring OneDrive URL.
 - Added versioned `diagnostics/environment.json` and `diagnostics/runtime-log.jsonl` output with browser/OS context, lifecycle milestones, capture failures, compatibility gaps, and export-time credential redaction; no logs are uploaded automatically.
+- Added bounded diagnostic entry/detail budgets with explicit truncation reporting, error stacks, global service-worker error/rejection capture, and automatic `_interrupted` ZIP recovery for debugger detach, tab close, startup failure where export remains available, and service-worker restart.
 
 ## Validation Status
 

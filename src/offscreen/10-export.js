@@ -75,6 +75,13 @@ async function exportSession(sessionId, meta) {
   diagnostics.entries.forEach(function (entry, index) {
     entry.detail = WebCaptrueSanitize.diagnosticValue(entry.detail, "", sanitizedExport.redactions, "$.diagnostics.entries[" + index + "].detail");
   });
+  ["failures", "truncations", "exclusions", "runtimeIssues"].forEach(function (key) {
+    completeness[key] = WebCaptrueSanitize.diagnosticValue(completeness[key], "", sanitizedExport.redactions, "$.completeness." + key);
+  });
+  if (diagnostics.truncation) {
+    completeness.truncations.push({ type: "diagnosticLogTruncation", capturedAt: new Date().toISOString(), data: diagnostics.truncation });
+    completeness.verdict = "known-gaps";
+  }
   completeness.redactions = { count: sanitizedExport.redactions.length, stage: "export", structurePreserved: true };
   var summary = buildSummary(meta, records, apiIndex, workflow, completeness);
   var files = [];

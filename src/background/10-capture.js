@@ -179,13 +179,11 @@ async function captureExistingResources() {
 
 async function startCapture(tabId, options) {
   if (state.active) throw new Error("已有采集任务正在运行");
+  if (state.recoverable && state.sessionId) await exportInterruptedSession("recovery-before-new-capture");
   var tab = await getTab(tabId);
   if (!tab.url || /^(chrome|edge|about|devtools):/i.test(tab.url)) throw new Error("当前页面不允许扩展调试，请打开普通网页后重试");
 
-  await ensureOffscreen();
   var debuggee = { tabId: tabId };
-  await debuggerAttach(debuggee);
-
   var sessionId = "cap-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
   state = freshState();
   state.active = true;
@@ -194,6 +192,13 @@ async function startCapture(tabId, options) {
   state.startedAt = new Date().toISOString();
   state.url = tab.url;
   state.title = tab.title || "";
+  state.environment = {
+    extensionVersion: chrome.runtime.getManifest().version,
+    minimumChromeVersion: 109,
+    userAgent: navigator.userAgent,
+    platform: navigator.platform || "",
+    language: navigator.language || ""
+  };
   state.options = {
     captureBodies: !options || options.captureBodies !== false,
     autoScreenshots: !options || options.autoScreenshots !== false,
@@ -232,11 +237,23 @@ async function startCapture(tabId, options) {
   targetDiscoveryFailureCodes.clear();
   state.stopping = false;
   await db.clearSession(sessionId);
-  await diagnosticLog("info", "capture", "capture-started", {
+  await diagnosticLog("info", "capture", "capture-starting", {
     tabId: tabId,
     url: state.url,
     options: state.options
   });
+  try {
+    await ensureOffscreen();
+    await debuggerAttach(debuggee);
+  } catch (startupError) {
+    state.active = false;
+    state.recoverable = true;
+    state.lastError = "Capture startup failed: " + (startupError.message || String(startupError));
+    await diagnosticLog("error", "capture", "capture-startup-failed", { error: errorDiagnostic(startupError) });
+    schedulePersist();
+    try { await exportInterruptedSession("capture-startup-failed", startupError); } catch (_) {}
+    throw startupError;
+  }
   try {
     await enableCaptureDomains(debuggee, "page");
   } catch (error) {
@@ -244,20 +261,18 @@ async function startCapture(tabId, options) {
     expectedDetachKeys.add(sourceKey(debuggee));
     await debuggerDetach(debuggee);
     expectedDetachKeys.delete(sourceKey(debuggee));
+    state.recoverable = true;
+    await diagnosticLog("error", "capture", "capture-domain-enable-failed", { error: errorDiagnostic(error) });
+    try { await exportInterruptedSession("capture-domain-enable-failed", error); } catch (_) {}
     throw error;
   }
+  await diagnosticLog("info", "capture", "capture-started", { protocolVersion: PROTOCOL_VERSION });
   await diagnosticLog("info", "capture", "root-domains-enabled", { protocolVersion: PROTOCOL_VERSION });
   await addRecord("sessionStart", {
     url: state.url,
     title: state.title,
     options: state.options,
-    environment: {
-      extensionVersion: chrome.runtime.getManifest().version,
-      minimumChromeVersion: 109,
-      userAgent: navigator.userAgent,
-      platform: navigator.platform || "",
-      language: navigator.language || ""
-    }
+    environment: state.environment
   });
   schedulePersist();
   try {
@@ -283,8 +298,63 @@ async function startCapture(tabId, options) {
   return cloneState();
 }
 
+async function downloadSessionArchive(sessionId, meta, suffix) {
+  await ensureOffscreen();
+  var exportResult = await runtimeSend({
+    target: "offscreen",
+    type: "EXPORT_SESSION",
+    sessionId: sessionId,
+    meta: meta
+  });
+  var filename = "WebCaptrue_" + compactDate(new Date()) + (suffix || "") + ".zip";
+  await downloadUrl(exportResult.blobUrl, filename);
+  setTimeout(function () {
+    chrome.runtime.sendMessage({ target: "offscreen", type: "REVOKE_BLOB", blobUrl: exportResult.blobUrl }, function () { void chrome.runtime.lastError; });
+  }, 60000);
+  return filename;
+}
+
+function exportInterruptedSession(reason, error) {
+  if (interruptedExportPromise) return interruptedExportPromise;
+  if (!state.sessionId) return Promise.resolve({ state: cloneState(), filename: null });
+  interruptedExportPromise = Promise.resolve().then(async function () {
+    var sessionId = state.sessionId;
+    state.active = false;
+    state.stopping = false;
+    state.recoverable = true;
+    state.lastError = state.lastError || "Capture interrupted: " + reason;
+    markCompletenessIssue("interrupted-session", { reason: reason });
+    await diagnosticLog("error", "capture", "interrupted-session", {
+      reason: reason,
+      error: error ? errorDiagnostic(error) : null,
+      counters: state.counters
+    });
+    await addRecord("sessionInterrupted", { reason: reason, error: error ? errorDiagnostic(error) : null, counters: state.counters });
+    await waitForPendingDebuggerEvents();
+    await waitForPendingRecordWrites();
+    await diagnosticLog("info", "export", "export-requested", { sessionId: sessionId, formatVersion: 3, interrupted: true });
+    await waitForPendingRecordWrites();
+    var interruptedState = cloneState();
+    try {
+      var filename = await downloadSessionArchive(sessionId, interruptedState, "_interrupted");
+      state.recoverable = false;
+      schedulePersist();
+      return { state: cloneState(), filename: filename };
+    } catch (exportError) {
+      state.lastError = "Interrupted capture export failed: " + (exportError.message || String(exportError));
+      await diagnosticLog("error", "export", "interrupted-export-failed", { error: errorDiagnostic(exportError) });
+      schedulePersist();
+      throw exportError;
+    }
+  }).finally(function () { interruptedExportPromise = null; });
+  return interruptedExportPromise;
+}
+
 async function stopCapture() {
-  if (!state.active) return { state: cloneState(), filename: null };
+  if (!state.active) {
+    if (state.recoverable && state.sessionId) return exportInterruptedSession("manual-recovery");
+    return { state: cloneState(), filename: null };
+  }
   var stoppedState;
   var sessionId = state.sessionId;
   var debuggee = { tabId: state.tabId };
@@ -319,22 +389,21 @@ async function stopCapture() {
 
   state.active = false;
   state.stopping = false;
+  state.recoverable = false;
   schedulePersist();
   stoppedState = cloneState();
   await diagnosticLog("info", "export", "export-requested", { sessionId: sessionId, formatVersion: 3 });
 
-  var exportResult = await runtimeSend({
-    target: "offscreen",
-    type: "EXPORT_SESSION",
-    sessionId: sessionId,
-    meta: stoppedState
-  });
-  var filename = "WebCaptrue_" + compactDate(new Date()) + ".zip";
-  await downloadUrl(exportResult.blobUrl, filename);
-  setTimeout(function () {
-    chrome.runtime.sendMessage({ target: "offscreen", type: "REVOKE_BLOB", blobUrl: exportResult.blobUrl }, function () { void chrome.runtime.lastError; });
-  }, 60000);
-  return { state: stoppedState, filename: filename };
+  try {
+    var filename = await downloadSessionArchive(sessionId, stoppedState, "");
+    return { state: stoppedState, filename: filename };
+  } catch (exportError) {
+    state.recoverable = true;
+    state.lastError = "Capture export failed: " + (exportError.message || String(exportError));
+    await diagnosticLog("error", "export", "capture-export-failed", { error: errorDiagnostic(exportError) });
+    schedulePersist();
+    throw exportError;
+  }
 }
 
 function compactDate(date) {
