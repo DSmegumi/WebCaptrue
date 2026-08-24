@@ -10,7 +10,7 @@ Protect capture completeness and structural fidelity first, then apply auditable
 
 ## Current State
 
-The extension now completes real start/stop/export flows in macOS Chrome 151. A local E2E fixture exercises page, iframe, cross-origin iframe, Dedicated Worker, pre-existing Shared Worker, Service Worker, Fetch, WebSocket, SSE, DOM, storage, screenshots, interaction, and exception paths. The latest safe-attribution export reports the unresolved browser evidence as `known-gaps` instead of mis-associating it. The current worktree adds offline per-session environment and runtime diagnostics to capture format v3; automated archive, syntax, compatibility, and redaction checks pass, while a post-reload Chrome ZIP run is still pending. Version 0.2.1 remains the latest signed release. The hard Windows 7 / Chrome 109 acceptance gate remains untested.
+The extension now completes real start/stop/export flows in macOS Chrome 151. A local E2E fixture exercises page, iframe, cross-origin iframe, Dedicated Worker, pre-existing Shared Worker, Service Worker, Fetch, WebSocket, SSE, DOM, storage, screenshots, interaction, and exception paths. The latest safe-attribution export reports the unresolved browser evidence as `known-gaps` instead of mis-associating it. Local main adds offline per-session environment and runtime diagnostics to capture format v3; automated archive, syntax, compatibility, and redaction checks pass, while a post-reload Chrome ZIP run is still pending. A signed 0.2.2 release candidate has been built and verified locally; remote publication is pending. The hard Windows 7 / Chrome 109 acceptance gate remains untested.
 
 ## Completed Work
 
@@ -47,6 +47,7 @@ The extension now completes real start/stop/export flows in macOS Chrome 151. A 
 - `npm test`: passed manifest/API baseline, syntax, integrity, ZIP, and smoke checks.
 - `git diff --check`: passed.
 - `WebCaptrue-0.2.1.crx`: CRX3/ZIP integrity passed; 38,964 bytes; SHA-256 `f6faf5f8759d7fca6544b014b61c768c42c383c442872e65ebf1f0cbdc3b1462`; extracted files matched the packaging directory.
+- `WebCaptrue-0.2.2.crx`: CRX3/ZIP integrity passed; 42,648 bytes; SHA-256 `0a80cc11750538e1dc96e49481b6d67086cd6032b2e199ea47193b271120c345`; extracted files matched the packaging directory. GitHub publication is pending.
 - GitHub `validate #21` and `Release CRX #4` passed for commit `89723f3`; Release `v0.2.1` points to that commit and publishes the same verified CRX digest.
 - Diagnostic builder, environment detection, failure aggregation, sensitive-field redaction, archive-path smoke checks, manifest/API validation, and JavaScript syntax checks pass locally.
 - Post-review regressions passed for scoped child targets, raw-to-export request/body/storage redaction, storage truncation accounting, runtime-issue verdicts, redirect handling, and stop-time event draining.
