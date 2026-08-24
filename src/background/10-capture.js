@@ -11,7 +11,7 @@ async function capturePageState(label) {
     });
     await addRecord("domSnapshot", { label: label, html: dom.result && dom.result.value || "" });
   } catch (error) {
-    await addRecord("captureError", { operation: "dom-html-snapshot", label: label, reason: error.message || String(error) });
+    await addRecord("captureError", { operation: "dom-html-snapshot", label: label, reason: error.message || String(error), error: errorDiagnostic(error) });
   }
   try {
     var structured = await command(debuggee, "DOMSnapshot.captureSnapshot", {
@@ -21,7 +21,7 @@ async function capturePageState(label) {
     });
     await addRecord("domStructuredSnapshot", { label: label, snapshot: structured });
   } catch (error2) {
-    await addRecord("captureError", { operation: "dom-structured-snapshot", label: label, reason: error2.message || String(error2) });
+    await addRecord("captureError", { operation: "dom-structured-snapshot", label: label, reason: error2.message || String(error2), error: errorDiagnostic(error2) });
   }
 }
 
@@ -95,7 +95,7 @@ async function captureVisibleScreenshot(label, force) {
     schedulePersist();
     await addRecord("screenshot", { label: label, mode: "visible", dataUrl: dataUrl });
   } catch (error) {
-    await addRecord("captureError", { operation: "visible-screenshot", label: label, reason: error.message || String(error) });
+    await addRecord("captureError", { operation: "visible-screenshot", label: label, reason: error.message || String(error), error: errorDiagnostic(error) });
   }
 }
 
@@ -128,7 +128,7 @@ async function captureFullPageScreenshot(label) {
       dataUrl: "data:image/png;base64," + (shot.data || "")
     });
   } catch (error) {
-    await addRecord("fullPageScreenshotFallback", { label: label, reason: error.message || String(error) });
+    await addRecord("fullPageScreenshotFallback", { label: label, reason: error.message || String(error), error: errorDiagnostic(error) });
     await captureVisibleScreenshot(label + "-visible-fallback", true);
   }
 }
@@ -140,7 +140,7 @@ async function captureExistingResources() {
   try {
     tree = await command(debuggee, "Page.getResourceTree");
   } catch (error) {
-    await addRecord("captureError", { operation: "resource-tree", reason: error.message || String(error) });
+    await addRecord("captureError", { operation: "resource-tree", reason: error.message || String(error), error: errorDiagnostic(error) });
     return;
   }
 
@@ -167,7 +167,7 @@ async function captureExistingResources() {
           });
         }
       } catch (error) {
-        await addRecord("preloadedResourceSkipped", { url: resource.url, type: resource.type, mimeType: resource.mimeType, reason: error.message || String(error) });
+        await addRecord("preloadedResourceSkipped", { url: resource.url, type: resource.type, mimeType: resource.mimeType, reason: error.message || String(error), error: errorDiagnostic(error) });
       }
     }
     var children = frameTree.childFrames || [];
@@ -236,6 +236,7 @@ async function startCapture(tabId, options) {
   lastTargetScopeRefreshAt = 0;
   targetDiscoveryFailureCodes.clear();
   state.stopping = false;
+  await persistStateNow();
   await db.clearSession(sessionId);
   await diagnosticLog("info", "capture", "capture-starting", {
     tabId: tabId,
@@ -281,7 +282,7 @@ async function startCapture(tabId, options) {
     await diagnosticLog("info", "capture", "content-script-ready", { frameCount: injectedFrames.length });
   } catch (error2) {
     markCompletenessIssue("content-script-injection-failed", { reason: error2.message || String(error2) });
-    await addRecord("contentScriptInjectionFailed", { reason: error2.message || String(error2) });
+    await addRecord("contentScriptInjectionFailed", { reason: error2.message || String(error2), error: errorDiagnostic(error2) });
   }
   await discoverRelatedTargets();
   await diagnosticLog("info", "targets", "target-discovery-completed", {
@@ -319,8 +320,7 @@ function exportInterruptedSession(reason, error) {
   if (!state.sessionId) return Promise.resolve({ state: cloneState(), filename: null });
   interruptedExportPromise = Promise.resolve().then(async function () {
     var sessionId = state.sessionId;
-    state.active = false;
-    state.stopping = false;
+    state.stopping = true;
     state.recoverable = true;
     state.lastError = state.lastError || "Capture interrupted: " + reason;
     markCompletenessIssue("interrupted-session", { reason: reason });
@@ -330,8 +330,12 @@ function exportInterruptedSession(reason, error) {
       counters: state.counters
     });
     await addRecord("sessionInterrupted", { reason: reason, error: error ? errorDiagnostic(error) : null, counters: state.counters });
+    await stopTargetPolling();
     await waitForPendingDebuggerEvents();
+    await flushAllExtraInfo();
     await waitForPendingRecordWrites();
+    state.active = false;
+    state.stopping = false;
     await diagnosticLog("info", "export", "export-requested", { sessionId: sessionId, formatVersion: 3, interrupted: true });
     await waitForPendingRecordWrites();
     var interruptedState = cloneState();
@@ -389,14 +393,16 @@ async function stopCapture() {
 
   state.active = false;
   state.stopping = false;
-  state.recoverable = false;
+  state.recoverable = true;
   schedulePersist();
   stoppedState = cloneState();
   await diagnosticLog("info", "export", "export-requested", { sessionId: sessionId, formatVersion: 3 });
 
   try {
     var filename = await downloadSessionArchive(sessionId, stoppedState, "");
-    return { state: stoppedState, filename: filename };
+    state.recoverable = false;
+    schedulePersist();
+    return { state: cloneState(), filename: filename };
   } catch (exportError) {
     state.recoverable = true;
     state.lastError = "Capture export failed: " + (exportError.message || String(exportError));

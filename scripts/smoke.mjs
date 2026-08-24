@@ -29,6 +29,9 @@ for (const marker of ["Target.setDiscoverTargets", "targetId", "captureFullPageS
 for (const marker of ["diagnosticLog", "MAX_DIAGNOSTIC_LOG_ENTRIES", "diagnostic-log-capture-truncated", "capture-started", "initial-capture-completed", "stop-requested", "debugger-events-drained", "export-requested", "message-command-failed", "exportInterruptedSession", "service-worker-restarted", "interrupted-session"]) {
   if (!background.includes(marker)) throw new Error(`diagnostic lifecycle marker missing: ${marker}`);
 }
+if (background.indexOf("if (source.sessionId && capturedSessions.has(source.sessionId))") > background.indexOf("if (state.active && !state.stopping && source.tabId === state.tabId)")) {
+  throw new Error("flat-session child detach must be handled before root tab detach");
+}
 for (const marker of ["indexedDB.databases", "dumpCacheStorage", "REQUEST_CLIENT_STORAGE"]) {
   if (!content.includes(marker)) throw new Error(`client storage marker missing: ${marker}`);
 }

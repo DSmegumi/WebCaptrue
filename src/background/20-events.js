@@ -178,7 +178,7 @@ async function handleDebuggerEvent(source, method, params) {
         body: bodyText
       });
     } catch (error) {
-      await addRecord("responseBodySkipped", { requestId: params.requestId, requestKey: reqKey, target: target, reason: error.message || String(error) });
+      await addRecord("responseBodySkipped", { requestId: params.requestId, requestKey: reqKey, target: target, reason: error.message || String(error), error: errorDiagnostic(error) });
       if (!requestWasObserved) {
         markCompletenessIssue("pre-capture-response-body-unavailable", { requestId: params.requestId, requestKey: reqKey, reason: error.message || String(error) });
         await addRecord("responseBodyUnavailableGap", { requestId: params.requestId, requestKey: reqKey, target: target, reason: "response began before capture and its body could not be recovered" });
@@ -229,7 +229,7 @@ async function handleDebuggerEvent(source, method, params) {
         await addRecord("scriptSourceSkipped", { scriptId: params.scriptId, url: params.url || "", target: target, reason: "source exceeds 2 MB" });
       }
     } catch (error) {
-      await addRecord("scriptSourceSkipped", { scriptId: params.scriptId, url: params.url || "", target: target, reason: error.message || String(error) });
+      await addRecord("scriptSourceSkipped", { scriptId: params.scriptId, url: params.url || "", target: target, reason: error.message || String(error), error: errorDiagnostic(error) });
     }
     return;
   }
@@ -289,7 +289,7 @@ chrome.debugger.onEvent.addListener(function (source, method, params) {
     return handleDebuggerEvent(source, method, params || {});
   }).catch(function (error) {
     markCompletenessIssue("debugger-event-handling-failed", { source: sourceKey(source), method: method, reason: error.message || String(error) });
-    return addRecord("eventHandlingFailed", { source: sourceKey(source), method: method, reason: error.message || String(error) });
+    return addRecord("eventHandlingFailed", { source: sourceKey(source), method: method, reason: error.message || String(error), error: errorDiagnostic(error) });
   }).finally(function () {
     pendingDebuggerEvents.delete(pending);
     if (debuggerEventQueues.get(queueKey) === pending) debuggerEventQueues.delete(queueKey);
@@ -301,6 +301,22 @@ chrome.debugger.onEvent.addListener(function (source, method, params) {
 chrome.debugger.onDetach.addListener(function (source, reason) {
   var key = sourceKey(source);
   if (expectedDetachKeys.has(key)) return;
+  if (source.sessionId && capturedSessions.has(source.sessionId)) {
+    var sessionInfo = capturedSessions.get(source.sessionId) || {};
+    capturedSessions.delete(source.sessionId);
+    updateTargetCounter();
+    if (state.active && !state.stopping) {
+      addRecord("targetDetached", {
+        mode: "flat-session",
+        sessionId: source.sessionId,
+        targetId: sessionInfo.targetId || "",
+        type: sessionInfo.type || "other",
+        reason: reason
+      });
+    }
+    schedulePersist();
+    return;
+  }
   if (source.targetId && capturedTargets.has(source.targetId)) {
     capturedTargets.delete(source.targetId);
     updateTargetCounter();

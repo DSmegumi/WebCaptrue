@@ -210,10 +210,22 @@ function schedulePersist() {
   if (persistTimer) return;
   persistTimer = setTimeout(function () {
     persistTimer = null;
-    var obj = {}; obj[STATE_KEY] = cloneState();
-    chrome.storage.local.set(obj, function () { void chrome.runtime.lastError; });
-    chrome.runtime.sendMessage({ type: "STATE_UPDATED", state: cloneState() }, function () { void chrome.runtime.lastError; });
+    persistStateNow();
   }, 350);
+}
+
+function persistStateNow() {
+  var snapshot = cloneState();
+  var obj = {}; obj[STATE_KEY] = snapshot;
+  return new Promise(function (resolve) {
+    chrome.storage.local.set(obj, function () {
+      void chrome.runtime.lastError;
+      chrome.runtime.sendMessage({ type: "STATE_UPDATED", state: snapshot }, function () {
+        void chrome.runtime.lastError;
+        resolve();
+      });
+    });
+  });
 }
 
 function markCompletenessIssue(code, detail) {
@@ -504,10 +516,10 @@ async function discoveryCommand(debuggee, method, params, optionalFallback) {
     if (!targetDiscoveryFailureCodes.has(code)) {
       targetDiscoveryFailureCodes.add(code);
       if (optionalFallback) {
-        await addRecord("targetDiscoveryFallback", { method: method, reason: error.message || String(error), fallback: "chrome.debugger.getTargets and auto-attach" });
+        await addRecord("targetDiscoveryFallback", { method: method, reason: error.message || String(error), error: errorDiagnostic(error), fallback: "chrome.debugger.getTargets and auto-attach" });
       } else {
         markCompletenessIssue("target-discovery-command-failed", { method: method, reason: error.message || String(error) });
-        await addRecord("targetDiscoveryFailed", { method: method, reason: error.message || String(error) });
+        await addRecord("targetDiscoveryFailed", { method: method, reason: error.message || String(error), error: errorDiagnostic(error) });
       }
     }
     return null;
@@ -586,7 +598,7 @@ async function attachRelatedTarget(rawInfo, fallbackRelated) {
   } catch (error) {
     state.completeness.targetAttachFailures += 1;
     markCompletenessIssue("target-attach-failed", { targetId: info.targetId, type: info.type, url: info.url || "", reason: error.message || String(error) });
-    await addRecord("targetAttachFailed", { targetId: info.targetId, type: info.type, url: info.url || "", reason: error.message || String(error) });
+    await addRecord("targetAttachFailed", { targetId: info.targetId, type: info.type, url: info.url || "", reason: error.message || String(error), error: errorDiagnostic(error) });
   }
 }
 
@@ -596,7 +608,7 @@ async function enableFlatAutoAttach(debuggee) {
     return true;
   } catch (error) {
     markCompletenessIssue("flat-auto-attach-unavailable", { reason: error.message || String(error) });
-    await addRecord("targetAutoAttachFailed", { mode: "flat-session", reason: error.message || String(error) });
+    await addRecord("targetAutoAttachFailed", { mode: "flat-session", reason: error.message || String(error), error: errorDiagnostic(error) });
     return false;
   }
 }
@@ -620,7 +632,7 @@ async function attachFlatSession(source, params) {
     updateTargetCounter();
     state.completeness.targetAttachFailures += 1;
     markCompletenessIssue("target-session-enable-failed", { targetId: info.targetId, type: info.type, reason: error.message || String(error) });
-    await addRecord("targetAttachFailed", { mode: "flat-session", sessionId: sessionId, targetId: info.targetId, type: info.type, url: info.url || "", reason: error.message || String(error) });
+    await addRecord("targetAttachFailed", { mode: "flat-session", sessionId: sessionId, targetId: info.targetId, type: info.type, url: info.url || "", reason: error.message || String(error), error: errorDiagnostic(error) });
   }
 }
 
@@ -642,7 +654,7 @@ async function attachExistingFlatTarget(rawInfo) {
   } catch (error) {
     state.completeness.targetAttachFailures += 1;
     markCompletenessIssue("target-attach-failed", { targetId: info.targetId, type: info.type, url: info.url || "", reason: error.message || String(error) });
-    await addRecord("targetAttachFailed", { mode: "flat-session-sweep", targetId: info.targetId, type: info.type, url: info.url || "", reason: error.message || String(error) });
+    await addRecord("targetAttachFailed", { mode: "flat-session-sweep", targetId: info.targetId, type: info.type, url: info.url || "", reason: error.message || String(error), error: errorDiagnostic(error) });
   }
 }
 
@@ -737,7 +749,7 @@ async function discoverRelatedTargets() {
     extensionTargets = await debuggerGetTargets();
   } catch (error) {
     markCompletenessIssue("target-list-failed", { phase: "initial", reason: error.message || String(error) });
-    await addRecord("targetDiscoveryFailed", { phase: "initial", reason: error.message || String(error) });
+    await addRecord("targetDiscoveryFailed", { phase: "initial", reason: error.message || String(error), error: errorDiagnostic(error) });
   }
   for (var i = 0; i < extensionTargets.length; i += 1) {
     if (extensionTargets[i].tabId === state.tabId && extensionTargets[i].type === "page") {
