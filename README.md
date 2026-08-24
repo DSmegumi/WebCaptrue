@@ -25,7 +25,7 @@ WebCaptrue 是一个面向内网、隔离网和受限办公环境的一键浏览
 - 采集过程不依赖云端服务
 - Chrome 109 是最低兼容线，不是功能上限；新版 Chrome 采用渐进增强
 
-## v0.2.0 当前能力
+## v0.2.x 当前能力
 
 - 一键开始 / 停止并导出 ZIP
 - `chrome.debugger` + Chrome DevTools Protocol
@@ -53,6 +53,7 @@ WebCaptrue 是一个面向内网、隔离网和受限办公环境的一键浏览
 - 默认凭证字段脱敏
 - Chrome 109 Offscreen Document heartbeat
 - `integrity/completeness.json` 完整性结论及失败/截断/排除/脱敏审计
+- `diagnostics/environment.json` 与 `diagnostics/runtime-log.jsonl` 保存本机环境、采集生命周期、兼容性回退和错误日志
 - Chrome 125+ flat session 与 Chrome 109 `targetId` 回退
 - 对采集开始前已存在的 Shared Worker 进行同源范围补抓
 
@@ -84,13 +85,15 @@ WebCaptrue 是一个面向内网、隔离网和受限办公环境的一键浏览
 ```text
 ai/summary.json
 integrity/completeness.json
+diagnostics/environment.json
+diagnostics/runtime-log.jsonl
 ai/workflow.json
 api/api-index.json
 network/session.har
 timeline.jsonl
 ```
 
-先读取 `integrity/completeness.json` 判断是否存在已知缺口，再使用 `workflow.json` 和 `api-index.json`。`exclusions.jsonl` 记录非网页来源等有意排除项，`redactions.jsonl` 记录导出阶段的结构化脱敏位置。
+排查插件自身问题时先读取 `diagnostics/environment.json` 和 `diagnostics/runtime-log.jsonl`；分析网页采集完整性时先读取 `integrity/completeness.json`。随后再使用 `workflow.json` 和 `api-index.json`。`exclusions.jsonl` 记录非网页来源等有意排除项，`redactions.jsonl` 记录导出阶段的结构化脱敏位置。
 
 ## 安全
 
@@ -103,6 +106,7 @@ WebCaptrue 默认：
 - 递归脱敏常见 password/token/secret/session/apiKey 字段
 - 普通输入框只记录字段信息和长度，不记录输入原文
 - 不包含遥测或远程执行代码
+- 诊断日志只随本地 ZIP 导出，不会自动上传；其敏感字段和常见凭证文本同样在导出阶段脱敏
 
 采集记录先按浏览器暴露的结构保存到扩展本地会话，再在导出阶段对 DOM、运行时 JSON 和脚本字面量做结构保持型脱敏。截图保留原始像素，不执行 OCR 脱敏，因此仍可能显示页面中的敏感文本。
 
@@ -121,4 +125,4 @@ npm run test:e2e:fixture
 
 ## 当前状态
 
-v0.2.0 属于 Capture Completeness 阶段。核心录制架构已经形成，但仍需要重点完成 Chrome 109 / Windows 7 实机回归、Target 稳定性、大型会话保护、Source Map/源码重建以及更强的业务链路推断。
+v0.2.2 开发版属于 Capture Completeness 阶段。核心录制架构已经形成，但仍需要重点完成 Chrome 109 / Windows 7 实机回归、Target 稳定性、大型会话保护、Source Map/源码重建以及更强的业务链路推断。

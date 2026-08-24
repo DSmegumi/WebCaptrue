@@ -1,6 +1,6 @@
 # WebCaptrue 项目目标与推进计划
 
-> 当前版本：0.2.0（开发中）  
+> 当前版本：0.2.2（开发中）
 > 最低兼容基线：Google Chrome 109 / Windows 7  
 > 设计原则：Chrome 109 是最低兼容线，不是能力上限；新版 Chrome 能力采用渐进增强，但不得破坏 Chrome 109 的核心采集能力。
 
@@ -162,6 +162,7 @@ WebCaptrue 只采集浏览器本身能够观察或通过浏览器授权调试接
 - Chrome 125+ 使用 flat session；Chrome 109 使用同源/同标签页范围内的 `targetId` 轮询回退。
 - 采集开始前已经存在的 Shared Worker 通过全局 Target 扫描补抓，且失败会进入完整性报告。
 - 导出包含完整性结论、失败、截断、排除和脱敏审计，避免静默缺失。
+- 导出包含本机环境快照与插件运行诊断日志，用于 Windows 7/Chrome 109 等异机问题复现；日志保持离线并在导出阶段脱敏。
 - 第三方 `chrome-extension://` 资源保留元数据但不复制正文/源码，并逐项记录排除原因。
 - `timeline.jsonl` 只保留大对象引用；正文、脚本、DOM、Storage 和截图仍保存在各自权威目录。
 - 结构化 DOM、运行时 JSON 和脚本字面量在导出阶段脱敏，保持字段、数组和可解析结构。
@@ -179,6 +180,9 @@ WebCaptrue_YYYYMMDD_HHMMSS.zip
 │   ├── truncations.jsonl
 │   ├── exclusions.jsonl
 │   └── redactions.jsonl
+├── diagnostics/
+│   ├── environment.json
+│   └── runtime-log.jsonl
 ├── ai/
 │   ├── summary.json
 │   ├── workflow.json

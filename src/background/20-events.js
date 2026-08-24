@@ -393,7 +393,13 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
       return { ok: true, state: result.state, filename: result.filename };
     }
     return { ok: false, error: "Unknown message: " + message.type };
-  }).then(sendResponse).catch(function (error) {
+  }).then(sendResponse).catch(async function (error) {
+    if (state.sessionId) {
+      await diagnosticLog("error", "messaging", "message-command-failed", {
+        messageType: message.type,
+        reason: error.message || String(error)
+      });
+    }
     sendResponse({ ok: false, error: error.message || String(error) });
   });
   return true;

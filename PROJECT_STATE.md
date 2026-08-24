@@ -10,7 +10,7 @@ Protect capture completeness and structural fidelity first, then apply auditable
 
 ## Current State
 
-The extension now completes real start/stop/export flows in macOS Chrome 151. A local E2E fixture exercises page, iframe, cross-origin iframe, Dedicated Worker, pre-existing Shared Worker, Service Worker, Fetch, WebSocket, SSE, DOM, storage, screenshots, interaction, and exception paths. The latest safe-attribution export reports the unresolved browser evidence as `known-gaps` instead of mis-associating it. Version 0.2.1 is signed from the current source with the existing key; its repository-contained release asset replaces the unreliable OneDrive anonymous-download staging path. The hard Windows 7 / Chrome 109 acceptance gate remains untested.
+The extension now completes real start/stop/export flows in macOS Chrome 151. A local E2E fixture exercises page, iframe, cross-origin iframe, Dedicated Worker, pre-existing Shared Worker, Service Worker, Fetch, WebSocket, SSE, DOM, storage, screenshots, interaction, and exception paths. The latest safe-attribution export reports the unresolved browser evidence as `known-gaps` instead of mis-associating it. The current worktree adds offline per-session environment and runtime diagnostics to capture format v3; automated archive, syntax, compatibility, and redaction checks pass, while a post-reload Chrome ZIP run is still pending. Version 0.2.1 remains the latest signed release. The hard Windows 7 / Chrome 109 acceptance gate remains untested.
 
 ## Completed Work
 
@@ -37,6 +37,7 @@ The extension now completes real start/stop/export flows in macOS Chrome 151. A 
 - Added a persistent two-origin E2E fixture covering Fetch GET/POST, iframe/OOPIF, Dedicated/Shared/Service Worker, WebSocket, SSE, IndexedDB, Cache Storage, SPA navigation, and exceptions.
 - Added integrity regression tests for Chrome 109 routing, target scoping, redirect/drain implementation markers, raw-to-export network/storage redaction, SSE completeness, exclusions, source-code structural redaction, and structured DOM password redaction.
 - Rebuilt the signed CRX as 0.2.1 from the current runtime files, verified its ZIP contents byte-for-byte against the packaging directory, and changed Release automation to verify a repository-contained signed asset instead of an expiring OneDrive URL.
+- Added versioned `diagnostics/environment.json` and `diagnostics/runtime-log.jsonl` output with browser/OS context, lifecycle milestones, capture failures, compatibility gaps, and export-time credential redaction; no logs are uploaded automatically.
 
 ## Validation Status
 
@@ -46,6 +47,7 @@ The extension now completes real start/stop/export flows in macOS Chrome 151. A 
 - `git diff --check`: passed.
 - `WebCaptrue-0.2.1.crx`: CRX3/ZIP integrity passed; 38,964 bytes; SHA-256 `f6faf5f8759d7fca6544b014b61c768c42c383c442872e65ebf1f0cbdc3b1462`; extracted files matched the packaging directory.
 - GitHub `validate #21` and `Release CRX #4` passed for commit `89723f3`; Release `v0.2.1` points to that commit and publishes the same verified CRX digest.
+- Diagnostic builder, environment detection, failure aggregation, sensitive-field redaction, archive-path smoke checks, manifest/API validation, and JavaScript syntax checks pass locally.
 - Post-review regressions passed for scoped child targets, raw-to-export request/body/storage redaction, storage truncation accounting, runtime-issue verdicts, redirect handling, and stop-time event draining.
 - Final-review regressions passed for cross-tab rejection and base64 JSON redaction; key Target discovery failures are now explicit completeness issues rather than silent empty results.
 - Real Chrome 151 popup automation: actual toolbar icon → start → interactions → stop → ZIP download completed.
@@ -62,6 +64,7 @@ The extension now completes real start/stop/export flows in macOS Chrome 151. A 
 ### Not Yet Run
 
 - Windows 7 / Chrome 109 installation and end-to-end regression.
+- Post-reload Chrome 151 start/stop/export verification of the new diagnostics files.
 - Long-duration and large-session budgets, tab crash, debugger takeover, and service-worker restart recovery.
 - Safe ownership proof for a pre-existing Shared Worker whose script URL is not exposed in the page's resource timing data.
 - Safe cross-Target correlation for ExtraInfo that Chrome delivers on the root debugger source while the request/response events arrive on a child session.
@@ -76,7 +79,7 @@ The extension now completes real start/stop/export flows in macOS Chrome 151. A 
 
 ## Next Action
 
-Without a Windows 7 machine, next design a browser-evidence-based ownership/correlation mechanism for pre-existing Shared Workers and cross-source ExtraInfo; if proof is unavailable, retain the current explicit gaps. Then implement and stress-test bounded session totals.
+Reload the unpacked extension in Chrome 151 and verify a real exported ZIP contains usable, redacted diagnostics alongside the network data. Without a Windows 7 machine, then retain explicit compatibility gaps and continue bounded-session stress work.
 
 ## Important Files
 

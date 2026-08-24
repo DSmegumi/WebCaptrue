@@ -146,6 +146,24 @@
     return value;
   }
 
+  function diagnosticValue(value, keyName, audit, path) {
+    if (isSensitiveKey(keyName)) {
+      note(audit, "diagnostic-sensitive-field", path);
+      return "[REDACTED]";
+    }
+    if (Array.isArray(value)) return value.map(function (item, index) { return diagnosticValue(item, "", audit, (path || "$") + "[" + index + "]"); });
+    if (value && typeof value === "object") {
+      var out = {};
+      Object.keys(value).forEach(function (key) { out[key] = diagnosticValue(value[key], key, audit, (path || "$") + "." + key); });
+      return out;
+    }
+    if (typeof value !== "string") return value;
+    return value.replace(/((?:password|passwd|pwd|token|access[_-]?token|refresh[_-]?token|api[_-]?key|secret|session[_-]?id|authorization|cookie)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|Bearer\s+[^\s,;&]+|[^\s,;&]+)/ig, function (_, prefix) {
+      note(audit, "diagnostic-sensitive-text", path);
+      return prefix + "[REDACTED]";
+    });
+  }
+
   function html(value, audit, path) {
     var text = String(value || "");
     if (typeof DOMParser === "undefined") return text;
@@ -244,6 +262,7 @@
       }
       if (copy.type === "domSnapshot" && copy.data) copy.data.html = html(copy.data.html, audit, "$[" + index + "].data.html");
       if (copy.type === "domStructuredSnapshot" && copy.data) copy.data.snapshot = domSnapshot(copy.data.snapshot, audit, "$[" + index + "].data.snapshot");
+      if (copy.type === "diagnosticLog" && copy.data && copy.data.detail) copy.data.detail = diagnosticValue(copy.data.detail, "", audit, dataPath + ".detail");
       return copy;
     });
     return { records: output, redactions: audit };
@@ -257,6 +276,7 @@
     payloadText: payloadText,
     sourceText: sourceText,
     domSnapshot: domSnapshot,
+    diagnosticValue: diagnosticValue,
     passwordValuesFromSnapshot: passwordValuesFromSnapshot,
     exportRecords: exportRecords
   };

@@ -232,6 +232,11 @@ async function startCapture(tabId, options) {
   targetDiscoveryFailureCodes.clear();
   state.stopping = false;
   await db.clearSession(sessionId);
+  await diagnosticLog("info", "capture", "capture-started", {
+    tabId: tabId,
+    url: state.url,
+    options: state.options
+  });
   try {
     await enableCaptureDomains(debuggee, "page");
   } catch (error) {
@@ -241,20 +246,40 @@ async function startCapture(tabId, options) {
     expectedDetachKeys.delete(sourceKey(debuggee));
     throw error;
   }
-  await addRecord("sessionStart", { url: state.url, title: state.title, options: state.options, userAgent: navigator.userAgent });
+  await diagnosticLog("info", "capture", "root-domains-enabled", { protocolVersion: PROTOCOL_VERSION });
+  await addRecord("sessionStart", {
+    url: state.url,
+    title: state.title,
+    options: state.options,
+    environment: {
+      extensionVersion: chrome.runtime.getManifest().version,
+      minimumChromeVersion: 109,
+      userAgent: navigator.userAgent,
+      platform: navigator.platform || "",
+      language: navigator.language || ""
+    }
+  });
   schedulePersist();
   try {
     var injectedFrames = await executeContentScript(tabId);
     await addRecord("contentScriptReady", { frameCount: injectedFrames.length });
+    await diagnosticLog("info", "capture", "content-script-ready", { frameCount: injectedFrames.length });
   } catch (error2) {
     markCompletenessIssue("content-script-injection-failed", { reason: error2.message || String(error2) });
     await addRecord("contentScriptInjectionFailed", { reason: error2.message || String(error2) });
   }
   await discoverRelatedTargets();
+  await diagnosticLog("info", "targets", "target-discovery-completed", {
+    mode: state.completeness.targetMode,
+    scans: state.completeness.targetScans,
+    candidates: state.completeness.targetCandidates,
+    attached: state.counters.targets
+  });
   await captureExistingResources();
   await capturePageState("start");
   await captureClientStorage("start");
   await captureFullPageScreenshot("start");
+  await diagnosticLog("info", "capture", "initial-capture-completed", { counters: state.counters });
   return cloneState();
 }
 
@@ -264,11 +289,13 @@ async function stopCapture() {
   var sessionId = state.sessionId;
   var debuggee = { tabId: state.tabId };
   state.stopping = true;
+  await diagnosticLog("info", "capture", "stop-requested", { counters: state.counters });
   await stopTargetPolling();
 
   await capturePageState("final");
   await captureClientStorage("final");
   await captureFullPageScreenshot("final");
+  await diagnosticLog("info", "capture", "final-snapshots-completed", { counters: state.counters });
   await detachChildTargets();
   await tryCommand(debuggee, "Target.setAutoAttach", { autoAttach: false, waitForDebuggerOnStart: false, flatten: flatSessionsSupported });
   await discoveryCommand(debuggee, "Target.setDiscoverTargets", { discover: false }, true);
@@ -278,17 +305,23 @@ async function stopCapture() {
   await waitForDebuggerQuiet();
   await waitForPendingDebuggerEvents();
   await flushAllExtraInfo();
+  await diagnosticLog("info", "capture", "debugger-events-drained", {
+    pendingDebuggerEvents: pendingDebuggerEvents.size,
+    pendingRecordWrites: pendingRecordWrites.size
+  });
   capturedTargets.clear();
   capturedSessions.clear();
   expectedDetachKeys.clear();
   updateTargetCounter();
   await addRecord("sessionStop", { stoppedAt: new Date().toISOString(), counters: state.counters });
+  await diagnosticLog("info", "capture", "capture-stopped", { counters: state.counters });
   await waitForPendingRecordWrites();
 
   state.active = false;
   state.stopping = false;
   schedulePersist();
   stoppedState = cloneState();
+  await diagnosticLog("info", "export", "export-requested", { sessionId: sessionId, formatVersion: 3 });
 
   var exportResult = await runtimeSend({
     target: "offscreen",

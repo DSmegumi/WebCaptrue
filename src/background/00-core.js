@@ -235,6 +235,15 @@ function addRecord(type, data) {
   return write;
 }
 
+function diagnosticLog(level, component, event, detail) {
+  return addRecord("diagnosticLog", {
+    level: level || "info",
+    component: component || "extension",
+    event: event || "diagnostic",
+    detail: detail || {}
+  });
+}
+
 function isApiType(type) {
   return type === "XHR" || type === "Fetch";
 }

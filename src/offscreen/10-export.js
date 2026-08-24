@@ -71,13 +71,17 @@ async function exportSession(sessionId, meta) {
   var apiIndex = buildApiIndex(requests, responses, bodies);
   var workflow = buildWorkflow(interactions, requests, responses);
   var completeness = buildCompleteness(meta, records);
+  var diagnostics = buildDiagnostics(meta, records);
+  diagnostics.entries.forEach(function (entry, index) {
+    entry.detail = WebCaptrueSanitize.diagnosticValue(entry.detail, "", sanitizedExport.redactions, "$.diagnostics.entries[" + index + "].detail");
+  });
   completeness.redactions = { count: sanitizedExport.redactions.length, stage: "export", structurePreserved: true };
   var summary = buildSummary(meta, records, apiIndex, workflow, completeness);
   var files = [];
 
   files.push(textFile("manifest.json", {
     format: "webcaptrue-capture",
-    formatVersion: 2,
+    formatVersion: 3,
     extensionVersion: EXTENSION_VERSION,
     minimumChromeVersion: 109,
     exportedAt: new Date().toISOString(),
@@ -86,6 +90,7 @@ async function exportSession(sessionId, meta) {
   }));
   files.push(textFile("README.txt",
     "WebCaptrue offline capture\n\n" +
+    "Start diagnostics with diagnostics/environment.json and diagnostics/runtime-log.jsonl.\n" +
     "Start AI analysis with integrity/completeness.json, ai/summary.json, ai/workflow.json and api/api-index.json.\n" +
     "This archive may contain internal URLs, request/response bodies and business data.\n" +
     "Cookie, Authorization and Set-Cookie headers are redacted by default.\n" +
@@ -97,6 +102,8 @@ async function exportSession(sessionId, meta) {
   files.push(textFile("integrity/truncations.jsonl", completeness.truncations.map(function (item) { return JSON.stringify(item); }).join("\n") + (completeness.truncations.length ? "\n" : "")));
   files.push(textFile("integrity/exclusions.jsonl", completeness.exclusions.map(function (item) { return JSON.stringify(item); }).join("\n") + (completeness.exclusions.length ? "\n" : "")));
   files.push(textFile("integrity/redactions.jsonl", sanitizedExport.redactions.map(function (item) { return JSON.stringify(item); }).join("\n") + (sanitizedExport.redactions.length ? "\n" : "")));
+  files.push(textFile("diagnostics/environment.json", diagnostics.environment));
+  files.push(textFile("diagnostics/runtime-log.jsonl", diagnostics.entries.map(function (entry) { return JSON.stringify(entry); }).join("\n") + (diagnostics.entries.length ? "\n" : "")));
   files.push(textFile("ai/workflow.json", workflow));
   files.push(textFile("ai/analysis-guide.md",
     "# WebCaptrue analysis entrypoint\n\n" +
@@ -104,7 +111,8 @@ async function exportSession(sessionId, meta) {
     "2. Read `workflow.json` to map user actions to API calls.\n" +
     "3. Read `../api/api-index.json` for normalized endpoints and inferred schemas.\n" +
     "4. Use `../network/session.har` and request/response JSONL for exact traffic.\n" +
-    "5. Use `../runtime/scripts/`, `../dom/`, and `../storage/` to trace implementation details.\n"
+    "5. Use `../runtime/scripts/`, `../dom/`, and `../storage/` to trace implementation details.\n" +
+    "6. Use `../diagnostics/` for extension environment, compatibility and failure investigation.\n"
   ));
   files.push(textFile("timeline.jsonl", records.map(function (r) {
     var copy = JSON.parse(JSON.stringify(r));
@@ -172,11 +180,11 @@ async function exportSession(sessionId, meta) {
   });
 
   files.push(textFile("ai/capture-index.json", {
-    formatVersion: 2,
+    formatVersion: 3,
     generatedAt: new Date().toISOString(),
     logicalCounts: summary.counts,
     exportedFileCountBeforeIndex: files.length,
-    directories: ["ai", "api", "network", "interactions", "runtime", "dom", "storage", "screenshots", "resources", "integrity"],
+    directories: ["ai", "api", "network", "interactions", "runtime", "diagnostics", "dom", "storage", "screenshots", "resources", "integrity"],
     completenessVerdict: completeness.verdict
   }));
 

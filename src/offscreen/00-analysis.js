@@ -1,4 +1,4 @@
-var EXTENSION_VERSION = "0.2.0";
+var EXTENSION_VERSION = chrome.runtime.getManifest ? chrome.runtime.getManifest().version : "0.2.2";
 var db = new WebCaptrueDB();
 var blobUrls = new Set();
 
@@ -271,6 +271,79 @@ function unique(values) {
   var out = [];
   values.forEach(function (value) { if (value !== undefined && value !== null && value !== "" && out.indexOf(value) < 0) out.push(value); });
   return out;
+}
+
+function browserVersionFromUserAgent(userAgent) {
+  var match = String(userAgent || "").match(/(?:Chrome|Chromium)\/([0-9.]+)/i);
+  return match ? match[1] : "unknown";
+}
+
+function operatingSystemFromUserAgent(userAgent, platform) {
+  var ua = String(userAgent || "");
+  if (/Windows NT 6\.1/i.test(ua)) return "Windows 7";
+  if (/Windows NT 10\.0/i.test(ua)) return "Windows 10/11";
+  if (/^Win/i.test(String(platform || "")) || /Windows/i.test(ua)) return "Windows";
+  if (/Mac/i.test(String(platform || "")) || /Mac OS X/i.test(ua)) return "macOS";
+  if (/CrOS/i.test(ua)) return "ChromeOS";
+  if (/Linux/i.test(String(platform || "")) || /Linux/i.test(ua)) return "Linux";
+  return String(platform || "unknown");
+}
+
+function buildDiagnostics(meta, records) {
+  var errorTypes = ["targetAttachFailed", "targetAutoAttachFailed", "captureDomainEnableFailed", "contentScriptInjectionFailed", "clientStorageSnapshotSkipped", "captureError", "eventHandlingFailed", "debuggerDetached", "tabClosed", "eventDrainTimeout", "targetDiscoveryFailed"];
+  var warningTypes = ["responseBodySkipped", "preloadedResourceSkipped", "scriptSourceSkipped", "fullPageScreenshotFallback", "clientStorageTruncation", "responseBodyUnavailableGap", "targetAttributionGap", "extraInfoAssociationGap", "targetDiscoveryFallback"];
+  var entries = [];
+  var sessionStart = (records || []).find(function (record) { return record.type === "sessionStart"; });
+  var recordedEnvironment = sessionStart && sessionStart.data && sessionStart.data.environment || {};
+  var completenessState = (meta || {}).completeness || {};
+  (records || []).forEach(function (record) {
+    var data = record.data || {};
+    if (record.type === "diagnosticLog") {
+      entries.push({
+        at: record.capturedAt || data.at || "",
+        level: data.level || "info",
+        component: data.component || "extension",
+        event: data.event || "diagnostic",
+        detail: data.detail || {}
+      });
+    } else if (errorTypes.indexOf(record.type) >= 0 || warningTypes.indexOf(record.type) >= 0) {
+      entries.push({
+        at: record.capturedAt || "",
+        level: errorTypes.indexOf(record.type) >= 0 ? "error" : "warning",
+        component: "capture",
+        event: record.type,
+        detail: data
+      });
+    }
+  });
+  (((meta || {}).completeness || {}).issues || []).forEach(function (issue) {
+    entries.push({
+      at: issue.at || "",
+      level: "warning",
+      component: "completeness",
+      event: issue.code || "completeness-issue",
+      detail: issue.detail || {}
+    });
+  });
+  entries.sort(function (a, b) { return String(a.at).localeCompare(String(b.at)); });
+  entries.forEach(function (entry, index) { entry.sequence = index + 1; });
+  entries = entries.map(function (entry) {
+    return { sequence: entry.sequence, at: entry.at, level: entry.level, component: entry.component, event: entry.event, detail: entry.detail };
+  });
+  var environment = Object.assign({}, recordedEnvironment, {
+    browserVersion: browserVersionFromUserAgent(recordedEnvironment.userAgent),
+    operatingSystem: operatingSystemFromUserAgent(recordedEnvironment.userAgent, recordedEnvironment.platform),
+    sessionId: (meta || {}).sessionId || "",
+    startedAt: (meta || {}).startedAt || "",
+    targetMode: completenessState.targetMode || "unknown",
+    options: (meta || {}).options || {}
+  });
+  return {
+    format: "webcaptrue-diagnostics",
+    version: 1,
+    environment: environment,
+    entries: entries
+  };
 }
 
 function buildCompleteness(meta, records) {

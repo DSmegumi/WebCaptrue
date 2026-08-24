@@ -26,13 +26,16 @@ const offscreen = ["src/offscreen.js", "src/offscreen/00-analysis.js", "src/offs
 for (const marker of ["Target.setDiscoverTargets", "targetId", "captureFullPageScreenshot", "interactionId", "requestKey", "params.redirectResponse", "flushAllExtraInfo", "waitForPendingDebuggerEvents", "waitForPendingRecordWrites", "stopTargetPolling"]) {
   if (!background.includes(marker)) throw new Error(`background capture marker missing: ${marker}`);
 }
+for (const marker of ["diagnosticLog", "capture-started", "initial-capture-completed", "stop-requested", "debugger-events-drained", "export-requested", "message-command-failed"]) {
+  if (!background.includes(marker)) throw new Error(`diagnostic lifecycle marker missing: ${marker}`);
+}
 for (const marker of ["indexedDB.databases", "dumpCacheStorage", "REQUEST_CLIENT_STORAGE"]) {
   if (!content.includes(marker)) throw new Error(`client storage marker missing: ${marker}`);
 }
 if (!content.includes("event.isTrusted") || !content.includes("TOGGLE_CAPTURE_FROM_PAGE") || !background.includes("TOGGLE_CAPTURE_FROM_PAGE")) {
   throw new Error("trusted capture shortcut path missing");
 }
-for (const marker of ["ai/summary.json", "ai/workflow.json", "api/api-index.json", "integrity/completeness.json", "buildApiIndex", "buildWorkflow", "buildCompleteness"]) {
+for (const marker of ["ai/summary.json", "ai/workflow.json", "api/api-index.json", "integrity/completeness.json", "diagnostics/environment.json", "diagnostics/runtime-log.jsonl", "buildApiIndex", "buildWorkflow", "buildCompleteness", "buildDiagnostics"]) {
   if (!offscreen.includes(marker)) throw new Error(`AI export marker missing: ${marker}`);
 }
 

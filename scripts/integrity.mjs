@@ -65,6 +65,12 @@ const sanitizedRecords = sanitize.exportRecords([
 ]);
 assert.equal(sanitizedRecords.records[1].data.source, 'const injected = { text: "[REDACTED]", apiKey: "[REDACTED]" };');
 assert.equal(sanitizedRecords.records[2].data.body, 'const config = { authorization: "[REDACTED]" };');
+const sanitizedDiagnostic = sanitize.exportRecords([
+  { type: "diagnosticLog", data: { event: "capture-warning", detail: { token: "raw-token", message: "authorization=Bearer raw-secret" } } }
+]);
+assert.equal(sanitizedDiagnostic.records[0].data.detail.token, "[REDACTED]");
+assert.ok(!JSON.stringify(sanitizedDiagnostic.records).includes("raw-token"));
+assert.ok(!JSON.stringify(sanitizedDiagnostic.records).includes("raw-secret"));
 const networkExport = sanitize.exportRecords([
   { type: "request", data: { headers: { authorization: "Bearer raw", "content-type": "application/json" }, postData: '{"password":"raw","rows":[1]}' } },
   { type: "responseBody", data: { mimeType: "application/json", base64Encoded: false, body: '{"token":"raw","rows":[1]}' } },
@@ -87,8 +93,49 @@ assert.ok(nonUtf8Export.redactions.some(item => item.category === "base64-text-r
 
 context.WebCaptrueDB = function () {};
 context.setInterval = function () { return 0; };
-context.chrome = { runtime: { sendMessage() {} } };
+context.chrome = { runtime: { sendMessage() {}, getManifest() { return { version: "0.2.2" }; } } };
 vm.runInContext(fs.readFileSync(path.join(root, "src/offscreen/00-analysis.js"), "utf8"), context, { filename: "00-analysis.js" });
+const diagnosticLifecycle = context.buildDiagnostics({ completeness: { issues: [] } }, [
+  { type: "diagnosticLog", capturedAt: "2026-08-24T01:00:00.000Z", data: { level: "info", component: "capture", event: "capture-started", detail: { targetMode: "targetId-poll" } } }
+]);
+assert.deepEqual(JSON.parse(JSON.stringify(diagnosticLifecycle.entries)), [{
+  sequence: 1,
+  at: "2026-08-24T01:00:00.000Z",
+  level: "info",
+  component: "capture",
+  event: "capture-started",
+  detail: { targetMode: "targetId-poll" }
+}]);
+const diagnosticFailures = context.buildDiagnostics({
+  completeness: { issues: [{ code: "target-poll-failed", at: "2026-08-24T01:00:02.000Z", detail: { reason: "unsupported" } }] }
+}, [
+  { type: "captureError", capturedAt: "2026-08-24T01:00:01.000Z", data: { operation: "dom-html-snapshot", reason: "denied" } }
+]);
+assert.deepEqual(JSON.parse(JSON.stringify(diagnosticFailures.entries)), [
+  { sequence: 1, at: "2026-08-24T01:00:01.000Z", level: "error", component: "capture", event: "captureError", detail: { operation: "dom-html-snapshot", reason: "denied" } },
+  { sequence: 2, at: "2026-08-24T01:00:02.000Z", level: "warning", component: "completeness", event: "target-poll-failed", detail: { reason: "unsupported" } }
+]);
+const diagnosticEnvironment = context.buildDiagnostics({
+  sessionId: "cap-1",
+  startedAt: "2026-08-24T01:00:00.000Z",
+  options: { captureBodies: true },
+  completeness: { targetMode: "targetId-poll", issues: [] }
+}, [
+  { type: "sessionStart", capturedAt: "2026-08-24T01:00:00.000Z", data: { environment: { extensionVersion: "0.2.2", minimumChromeVersion: 109, userAgent: "Chrome/109", platform: "Win32", language: "zh-CN" } } }
+]);
+assert.deepEqual(JSON.parse(JSON.stringify(diagnosticEnvironment.environment)), {
+  extensionVersion: "0.2.2",
+  minimumChromeVersion: 109,
+  userAgent: "Chrome/109",
+  platform: "Win32",
+  language: "zh-CN",
+  browserVersion: "109",
+  operatingSystem: "Windows",
+  sessionId: "cap-1",
+  startedAt: "2026-08-24T01:00:00.000Z",
+  targetMode: "targetId-poll",
+  options: { captureBodies: true }
+});
 const completeness = context.buildCompleteness({ completeness: { recordWriteFailures: 0, issues: [] } }, [
   { type: "request", data: { requestKey: "page|1", method: "GET", url: "https://app.example.test/api" } },
   { type: "targetAttachFailed", data: { targetId: "worker-1", type: "worker", reason: "attach failed" } },
