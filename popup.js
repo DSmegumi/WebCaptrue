@@ -1,11 +1,14 @@
 (function () {
   "use strict";
 
+  var SETTINGS_KEY = "webcatrueSettings";
+  var DEFAULT_MAX_BODY_BYTES = 128 * 1024 * 1024;
   var primary = document.getElementById("primary");
   var badge = document.getElementById("badge");
   var target = document.getElementById("target");
   var message = document.getElementById("message");
   var captureBodies = document.getElementById("captureBodies");
+  var maxBodyBytes = document.getElementById("maxBodyBytes");
   var autoScreenshots = document.getElementById("autoScreenshots");
   var captureClientStorage = document.getElementById("captureClientStorage");
   var currentState = null;
@@ -35,6 +38,25 @@
     });
   }
 
+  function getSettings() {
+    return new Promise(function (resolve) {
+      chrome.storage.local.get([SETTINGS_KEY], function (saved) {
+        resolve(saved && saved[SETTINGS_KEY] || {});
+      });
+    });
+  }
+
+  function saveMaxBodyBytes(value) {
+    return getSettings().then(function (settings) {
+      settings.maxBodyBytes = value;
+      var obj = {};
+      obj[SETTINGS_KEY] = settings;
+      return new Promise(function (resolve) {
+        chrome.storage.local.set(obj, function () { void chrome.runtime.lastError; resolve(); });
+      });
+    });
+  }
+
   function setText(id, value) {
     document.getElementById(id).textContent = String(value || 0);
   }
@@ -57,6 +79,7 @@
       primary.textContent = "停止并导出 ZIP";
       primary.className = "stop";
       captureBodies.disabled = true;
+      maxBodyBytes.disabled = true;
       autoScreenshots.disabled = true;
       captureClientStorage.disabled = true;
     } else {
@@ -65,6 +88,7 @@
       primary.textContent = "开始完整采集";
       primary.className = "";
       captureBodies.disabled = false;
+      maxBodyBytes.disabled = false;
       autoScreenshots.disabled = false;
       captureClientStorage.disabled = false;
     }
@@ -73,9 +97,23 @@
   async function refresh() {
     activeTab = await queryActiveTab();
     target.textContent = activeTab ? (activeTab.title || activeTab.url || "当前标签页") : "未找到可采集标签页";
+    var settings = await getSettings();
+    var configuredLimit = settings.maxBodyBytes;
+    if (configuredLimit === undefined || configuredLimit === null || configuredLimit === 5 * 1024 * 1024) configuredLimit = DEFAULT_MAX_BODY_BYTES;
+    var optionValue = String(configuredLimit);
+    if (!Array.from(maxBodyBytes.options).some(function (option) { return option.value === optionValue; })) optionValue = String(DEFAULT_MAX_BODY_BYTES);
+    maxBodyBytes.value = optionValue;
     var response = await send({ type: "GET_STATUS" });
     render(response.state);
   }
+
+  maxBodyBytes.addEventListener("change", function () {
+    var value = Number(maxBodyBytes.value);
+    saveMaxBodyBytes(value).catch(function (error) {
+      message.className = "message error";
+      message.textContent = error.message || String(error);
+    });
+  });
 
   primary.addEventListener("click", async function () {
     message.className = "message";
@@ -92,6 +130,7 @@
         if (!activeTab || typeof activeTab.id !== "number") {
           throw new Error("未找到当前标签页");
         }
+        await saveMaxBodyBytes(Number(maxBodyBytes.value));
         var started = await send({
           type: "START_CAPTURE",
           tabId: activeTab.id,
