@@ -1,6 +1,6 @@
 {
   "name": "webcaptrue",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "Chrome 109-compatible offline web capture extension",
   "scripts": {
