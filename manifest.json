@@ -8,6 +8,7 @@
     "debugger",
     "scripting",
     "storage",
+    "unlimitedStorage",
     "downloads",
     "tabs",
     "webNavigation",
