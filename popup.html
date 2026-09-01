@@ -29,7 +29,16 @@
 
     <label class="option">
       <input id="captureBodies" type="checkbox" checked>
-      <span>保存响应正文（默认单个最多 5 MB）</span>
+      <span>保存响应正文</span>
+    </label>
+    <label class="option option-select">
+      <span>单个响应正文上限</span>
+      <select id="maxBodyBytes">
+        <option value="33554432">32 MiB</option>
+        <option value="134217728" selected>128 MiB（默认）</option>
+        <option value="536870912">512 MiB</option>
+        <option value="0">无限制</option>
+      </select>
     </label>
     <label class="option">
       <input id="autoScreenshots" type="checkbox" checked>
@@ -42,7 +51,7 @@
 
     <button id="primary" type="button">开始完整采集</button>
     <p id="message" class="message"></p>
-    <p class="footnote">快捷键 Ctrl+Shift+Y 可开始或停止采集。默认脱敏 Cookie、Authorization、Set-Cookie 和密码输入。</p>
+    <p class="footnote">“无限制”仅取消扩展自身的单响应截断；实际可保存大小仍受 Chrome 内存、CDP 缓冲和磁盘空间影响。快捷键 Ctrl+Shift+Y 可开始或停止采集。</p>
   </main>
   <script src="popup.js"></script>
 </body>
